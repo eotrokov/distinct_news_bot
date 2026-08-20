@@ -1,0 +1,20 @@
+services:
+  bot:
+    build: .
+    image: distinct-news-bot:latest
+    container_name: distinct-news-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      BOT_DB: /app/data/bot.sqlite3
+    volumes:
+      - bot-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  bot-data:
