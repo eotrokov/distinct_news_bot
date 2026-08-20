@@ -13,10 +13,9 @@ from telegram.ext import (
     filters,
 )
 
+from bot.addlist import extract_addlist_slug, parse_telegram_handles
 from bot.db import Database
 from bot.digest import parse_add_args
-from bot.fetchers.ria import RIA_FEEDS
-from bot.fetchers.telegram import normalize_telegram_handle
 from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
 from bot.menu import (
     cancel_awaiting,
@@ -29,6 +28,13 @@ from bot.menu import (
     show_sources_panel,
     show_topics_panel,
 )
+from bot.sources_ops import (
+    add_single_source,
+    add_telegram_channels,
+    add_telegram_from_text,
+    format_add_report,
+)
+from bot.tg_user import TelegramUserError, TelegramUserGateway
 from bot.topics import parse_topic_args
 
 logger = logging.getLogger(__name__)
@@ -43,6 +49,8 @@ HELP_TEXT = """\
 Команды:
 /menu — открыть меню
 /add <тип> <id|url> [название] — добавить источник
+/add telegram @a @b — несколько каналов сразу
+/addlist <ссылка> — добавить все каналы из папки t.me/addlist/…
 /remove <id> — удалить источник
 /sources — список источников
 /topic add <тема> — добавить тему-фильтр
@@ -51,13 +59,16 @@ HELP_TEXT = """\
 /topic clear — сбросить все темы
 /news — сводка с прошлого запроса
 /reset — сбросить точку прошлого запроса
+/tg_login +телефон — вход для разбора addlist
+/tg_code <код> — код из Telegram
+/tg_status — статус пользовательского входа
 /cancel — отменить ввод
 /help — эта справка
 
 Если темы заданы, в сводку попадают только новости, где встречается хотя бы одна тема (в заголовке или тексте). Без тем — все новости.
 
 Типы источников:
-• telegram — публичный канал (@channel)
+• telegram — публичный канал (@channel) или папка addlist
 • ria — лента РИА (main, politics, world, …) или URL RSS
 • rss — любой RSS/Atom URL
 • facebook — страница (нужен RSSHUB_BASE_URL) или URL RSS
@@ -65,11 +76,16 @@ HELP_TEXT = """\
 
 Примеры:
 /add telegram bbcnews
+/add telegram @ch1 @ch2 https://t.me/ch3
+/addlist https://t.me/addlist/_0flf9ViWOo0NjNi
 /add ria main
 /topic add seo
-/topic add marketing ai
 /news
 """
+
+
+def _tg_user(context: ContextTypes.DEFAULT_TYPE) -> TelegramUserGateway:
+    return context.application.bot_data["tg_user"]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -105,19 +121,43 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     db: Database = context.application.bot_data["db"]
     user_id = update.effective_user.id
+    args = list(context.args or [])
+
+    # /add https://t.me/addlist/...  or  /add addlist <url>
+    joined = " ".join(args)
+    if args and extract_addlist_slug(joined) and (
+        "addlist" in joined.lower() or (len(args) >= 1 and args[0].lower() in {"addlist", "folder", "list"})
+    ):
+        await _add_from_addlist(update, context, joined)
+        return
+
     try:
-        source_type, identifier, title = parse_add_args(context.args or [])
-        if source_type == "telegram":
-            identifier = normalize_telegram_handle(identifier)
-        if source_type == "ria" and not (
-            identifier.startswith("http://") or identifier.startswith("https://")
-        ):
-            key = identifier.lower()
-            if key not in RIA_FEEDS:
-                known = ", ".join(sorted(RIA_FEEDS))
-                raise ValueError(f"Лента РИА: {known} или полный URL RSS")
-            identifier = key
-        source = db.add_source(user_id, source_type, identifier, title)
+        if len(args) >= 2 and args[0].lower() in {
+            "telegram",
+            "tg",
+            "channel",
+            "addlist",
+            "folder",
+            "list",
+        }:
+            rest = " ".join(args[1:])
+            if extract_addlist_slug(rest) and "addlist" in rest.lower():
+                await _add_from_addlist(update, context, rest)
+                return
+            handles = parse_telegram_handles(rest)
+            if len(handles) > 1:
+                added, skipped = add_telegram_from_text(db, user_id, rest)
+                await update.message.reply_text(
+                    format_add_report(folder_title=None, added=added, skipped=skipped),
+                    reply_markup=main_reply_keyboard(),
+                )
+                return
+
+        source_type, identifier, title = parse_add_args(args)
+        if source_type == "telegram" and extract_addlist_slug(identifier) and "addlist" in identifier.lower():
+            await _add_from_addlist(update, context, identifier)
+            return
+        source = add_single_source(db, user_id, source_type, identifier, title)
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
@@ -128,6 +168,100 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_reply_keyboard(),
     )
+
+
+async def addlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "Формат: /addlist https://t.me/addlist/XXXX\n"
+            "Нужен один раз /tg_login (пользовательский API)."
+        )
+        return
+    await _add_from_addlist(update, context, " ".join(args))
+
+
+async def _add_from_addlist(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    raw: str,
+) -> None:
+    if not update.message or not update.effective_user:
+        return
+    db: Database = context.application.bot_data["db"]
+    user_id = update.effective_user.id
+    tg_user = _tg_user(context)
+    status = await update.message.reply_text("Читаю папку каналов…")
+    try:
+        title, channels = await tg_user.resolve_addlist(raw)
+        added, skipped = add_telegram_channels(db, user_id, channels)
+        text = format_add_report(
+            folder_title=title, added=added, skipped=skipped
+        )
+        await status.edit_text(text)
+    except TelegramUserError as exc:
+        await status.edit_text(str(exc))
+    except Exception:  # noqa: BLE001
+        logger.exception("addlist failed")
+        await status.edit_text("Не удалось разобрать addlist. Попробуйте позже.")
+
+
+async def tg_login_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "Формат: /tg_login +79001234567\n\n"
+            + await _tg_user(context).auth_status_text()
+        )
+        return
+    try:
+        text = await _tg_user(context).start_login(args[0])
+    except TelegramUserError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    await update.message.reply_text(text)
+
+
+async def tg_code_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Формат: /tg_code 12345")
+        return
+    try:
+        text = await _tg_user(context).confirm_code(args[0])
+    except TelegramUserError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    await update.message.reply_text(text)
+
+
+async def tg_password_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("Формат: /tg_password ваш_облачный_пароль")
+        return
+    # Password may contain spaces.
+    password = " ".join(args)
+    try:
+        text = await _tg_user(context).confirm_password(password)
+    except TelegramUserError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    await update.message.reply_text(text)
+
+
+async def tg_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    await update.message.reply_text(await _tg_user(context).auth_status_text())
 
 
 async def remove_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -263,6 +397,10 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if get_awaiting(context):
         await on_awaiting_text(update, context)
+        return
+    # Bare addlist URL pasted without command.
+    if extract_addlist_slug(text) and "addlist" in text.lower():
+        await _add_from_addlist(update, context, text)
 
 
 def register_handlers(app: Application) -> None:
@@ -271,6 +409,11 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("menu", menu_cmd))
     app.add_handler(CommandHandler("cancel", cancel_awaiting))
     app.add_handler(CommandHandler("add", add_source))
+    app.add_handler(CommandHandler("addlist", addlist_cmd))
+    app.add_handler(CommandHandler("tg_login", tg_login_cmd))
+    app.add_handler(CommandHandler("tg_code", tg_code_cmd))
+    app.add_handler(CommandHandler("tg_password", tg_password_cmd))
+    app.add_handler(CommandHandler("tg_status", tg_status_cmd))
     app.add_handler(CommandHandler("remove", remove_source))
     app.add_handler(CommandHandler("sources", list_sources))
     app.add_handler(CommandHandler("topic", topic_cmd))

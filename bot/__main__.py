@@ -9,6 +9,7 @@ from bot.config import Settings
 from bot.db import Database
 from bot.digest import DigestService
 from bot.handlers import register_handlers
+from bot.tg_user import TelegramUserGateway
 
 
 def setup_logging(level: str) -> None:
@@ -20,11 +21,17 @@ def setup_logging(level: str) -> None:
     # httpx logs full request URLs, which include the bot token.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("telethon").setLevel(logging.WARNING)
 
 
 def build_app(settings: Settings) -> Application:
     db = Database(settings.db_path)
     digest = DigestService(db, settings)
+    tg_user = TelegramUserGateway(
+        api_id=settings.telegram_api_id,
+        api_hash=settings.telegram_api_hash,
+        session_path=settings.telegram_session_path,
+    )
     app = (
         Application.builder()
         .token(settings.telegram_bot_token)
@@ -33,6 +40,7 @@ def build_app(settings: Settings) -> Application:
     app.bot_data["db"] = db
     app.bot_data["digest"] = digest
     app.bot_data["settings"] = settings
+    app.bot_data["tg_user"] = tg_user
     register_handlers(app)
     return app
 

@@ -16,9 +16,9 @@ def normalize_telegram_handle(value: str) -> str:
     value = value.strip()
     match = _HANDLE_RE.match(value)
     if match:
-        return match.group(1)
+        return match.group(1).lower()
     if re.fullmatch(r"@?[A-Za-z0-9_]{4,}", value):
-        return value.lstrip("@")
+        return value.lstrip("@").lower()
     raise ValueError(
         "Укажите публичный Telegram-канал: @channel, channel или https://t.me/channel"
     )

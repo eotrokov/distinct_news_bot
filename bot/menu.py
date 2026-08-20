@@ -7,8 +7,6 @@ from telegram.ext import ContextTypes
 
 from bot.db import Database
 from bot.digest import DigestService, format_digest, parse_add_args
-from bot.fetchers.ria import RIA_FEEDS
-from bot.fetchers.telegram import normalize_telegram_handle
 from bot.keyboards import (
     BTN_HELP,
     BTN_MENU,
@@ -307,6 +305,47 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         if kind == "source":
             source_type = str(awaiting.get("type"))
+            if source_type == "telegram":
+                from bot.addlist import extract_addlist_slug, parse_telegram_handles
+                from bot.sources_ops import (
+                    add_telegram_channels,
+                    add_telegram_from_text,
+                    format_add_report,
+                )
+                from bot.tg_user import TelegramUserError, TelegramUserGateway
+
+                if extract_addlist_slug(text) and "addlist" in text.lower():
+                    tg_user: TelegramUserGateway = context.application.bot_data["tg_user"]
+                    status = await update.message.reply_text("Читаю папку каналов…")
+                    try:
+                        title, channels = await tg_user.resolve_addlist(text)
+                        added, skipped = add_telegram_channels(db, user_id, channels)
+                        clear_awaiting(context)
+                        await status.edit_text(
+                            format_add_report(
+                                folder_title=title, added=added, skipped=skipped
+                            )
+                        )
+                        await update.message.reply_text(
+                            "Готово.",
+                            reply_markup=sources_keyboard(db.list_sources(user_id)),
+                        )
+                    except TelegramUserError as exc:
+                        await status.edit_text(str(exc))
+                    return
+
+                handles = parse_telegram_handles(text)
+                if len(handles) > 1:
+                    added, skipped = add_telegram_from_text(db, user_id, text)
+                    clear_awaiting(context)
+                    await update.message.reply_text(
+                        format_add_report(
+                            folder_title=None, added=added, skipped=skipped
+                        ),
+                        reply_markup=sources_keyboard(db.list_sources(user_id)),
+                    )
+                    return
+
             source = _add_source_from_text(db, user_id, source_type, text)
             clear_awaiting(context)
             await update.message.reply_text(
@@ -347,25 +386,17 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 def _add_source_from_text(
     db: Database, user_id: int, source_type: str, raw: str
 ):
+    from bot.sources_ops import add_single_source
+
     # Reuse /add parser with synthetic args.
     source_type, identifier, title = parse_add_args([source_type, *raw.split()])
-    if source_type == "telegram":
-        identifier = normalize_telegram_handle(identifier)
-    if source_type == "ria" and not (
-        identifier.startswith("http://") or identifier.startswith("https://")
-    ):
-        key = identifier.lower()
-        if key not in RIA_FEEDS:
-            known = ", ".join(sorted(RIA_FEEDS))
-            raise ValueError(f"Лента РИА: {known} или полный URL RSS")
-        identifier = key
     # For rss/facebook/twitter URLs with spaces broken by split — if raw is a URL, use it whole.
     if source_type in {"rss", "facebook", "twitter"} and (
         raw.startswith("http://") or raw.startswith("https://")
     ):
         identifier = raw.strip()
         title = title if title and not title.startswith("http") else identifier[:60]
-    return db.add_source(user_id, source_type, identifier, title)
+    return add_single_source(db, user_id, source_type, identifier, title)
 
 
 async def cancel_awaiting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

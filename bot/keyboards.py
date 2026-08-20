@@ -98,7 +98,12 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
 
 
 SOURCE_PROMPTS = {
-    "telegram": "Пришлите публичный канал: @channel или https://t.me/channel",
+    "telegram": (
+        "Пришлите публичный канал:\n"
+        "• @channel или https://t.me/channel\n"
+        "• несколько каналов через пробел/строки\n"
+        "• папку каналов: https://t.me/addlist/…"
+    ),
     "ria": "Пришлите ленту РИА: main / politics / world / … или URL RSS",
     "rss": "Пришлите URL RSS/Atom ленты",
     "facebook": "Пришлите имя страницы Facebook, URL страницы или URL RSS",
