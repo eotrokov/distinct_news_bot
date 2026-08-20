@@ -249,6 +249,20 @@ class Database:
             )
             return cur.rowcount > 0
 
+    def remove_topic_by_id(self, user_id: int, topic_id: int) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT topic FROM topics WHERE id = ? AND user_id = ?",
+                (topic_id, user_id),
+            ).fetchone()
+            if not row:
+                return None
+            conn.execute(
+                "DELETE FROM topics WHERE id = ? AND user_id = ?",
+                (topic_id, user_id),
+            )
+            return str(row["topic"])
+
     def clear_topics(self, user_id: int) -> int:
         with self.connect() as conn:
             cur = conn.execute(
@@ -258,16 +272,19 @@ class Database:
             return int(cur.rowcount)
 
     def list_topics(self, user_id: int) -> list[str]:
+        return [t for _, t in self.list_topic_rows(user_id)]
+
+    def list_topic_rows(self, user_id: int) -> list[tuple[int, str]]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT topic FROM topics
+                SELECT id, topic FROM topics
                 WHERE user_id = ?
                 ORDER BY topic
                 """,
                 (user_id,),
             ).fetchall()
-        return [str(row["topic"]) for row in rows]
+        return [(int(row["id"]), str(row["topic"])) for row in rows]
 
     @staticmethod
     def _row_to_source(row: sqlite3.Row) -> Source:
