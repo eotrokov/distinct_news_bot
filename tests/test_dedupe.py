@@ -49,3 +49,8 @@ def test_format_digest_empty():
     chunks = format_digest([], ["timeout"])
     assert "Новых новостей" in chunks[0]
     assert "timeout" in chunks[0]
+
+
+def test_format_digest_with_topics():
+    chunks = format_digest([], [], ["seo"])
+    assert "seo" in chunks[0]

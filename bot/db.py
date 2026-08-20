@@ -73,10 +73,21 @@ class Database:
                     FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS topics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    topic TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(user_id, topic),
+                    FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_sources_user
                     ON sources(user_id);
                 CREATE INDEX IF NOT EXISTS idx_seen_user_seen_at
                     ON seen_items(user_id, seen_at);
+                CREATE INDEX IF NOT EXISTS idx_topics_user
+                    ON topics(user_id);
                 """
             )
 
@@ -213,6 +224,50 @@ class Database:
                 "DELETE FROM seen_items WHERE user_id = ? AND seen_at < ?",
                 (user_id, cutoff_iso),
             )
+
+    def add_topic(self, user_id: int, topic: str) -> str:
+        self.ensure_user(user_id)
+        now = _utc_now().isoformat()
+        with self.connect() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO topics(user_id, topic, created_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (user_id, topic, now),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError(f"Тема уже добавлена: {topic}") from exc
+        return topic
+
+    def remove_topic(self, user_id: int, topic: str) -> bool:
+        with self.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM topics WHERE user_id = ? AND topic = ?",
+                (user_id, topic),
+            )
+            return cur.rowcount > 0
+
+    def clear_topics(self, user_id: int) -> int:
+        with self.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM topics WHERE user_id = ?",
+                (user_id,),
+            )
+            return int(cur.rowcount)
+
+    def list_topics(self, user_id: int) -> list[str]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT topic FROM topics
+                WHERE user_id = ?
+                ORDER BY topic
+                """,
+                (user_id,),
+            ).fetchall()
+        return [str(row["topic"]) for row in rows]
 
     @staticmethod
     def _row_to_source(row: sqlite3.Row) -> Source:

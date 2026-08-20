@@ -31,3 +31,15 @@ def test_db_sources_and_seen(tmp_path):
 
     assert db.remove_source(user_id, source.id) is True
     assert db.list_sources(user_id) == []
+
+
+def test_db_topics(tmp_path):
+    db = Database(str(tmp_path / "topics.sqlite3"))
+    user_id = 7
+    db.add_topic(user_id, "seo")
+    db.add_topic(user_id, "marketing")
+    assert db.list_topics(user_id) == ["marketing", "seo"]
+    assert db.remove_topic(user_id, "seo") is True
+    assert db.list_topics(user_id) == ["marketing"]
+    assert db.clear_topics(user_id) == 1
+    assert db.list_topics(user_id) == []

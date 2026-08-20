@@ -16,6 +16,7 @@ from bot.fetchers import (
     TwitterFetcher,
 )
 from bot.models import NewsItem, Source, SourceType
+from bot.topics import item_matches_topics
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,13 @@ class DigestService:
             "twitter": TwitterFetcher(self.rss, settings.rsshub_base_url),
         }
 
-    async def collect_for_user(self, user_id: int) -> tuple[list[NewsItem], list[str]]:
+    async def collect_for_user(self, user_id: int) -> tuple[list[NewsItem], list[str], list[str]]:
+        """Return (items, errors, active_topics)."""
         sources = self.db.list_sources(user_id)
         if not sources:
-            return [], ["Нет источников. Добавьте через /add"]
+            return [], ["Нет источников. Добавьте через /add"], self.db.list_topics(user_id)
+
+        topics = self.db.list_topics(user_id)
 
         since = self.db.get_last_digest_at(user_id)
         if since is None:
@@ -63,6 +67,14 @@ class DigestService:
             if item.published_at is None or item.published_at >= since:
                 filtered.append(item)
 
+        # Topic filter (OR): empty topics → keep all.
+        if topics:
+            filtered = [
+                item
+                for item in filtered
+                if item_matches_topics(item.title, item.summary, topics)
+            ]
+
         unique = deduplicate(filtered)
 
         # Drop items already shown to this user.
@@ -75,7 +87,7 @@ class DigestService:
             key=lambda i: i.published_at or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True,
         )
-        return fresh[: self.settings.digest_limit], errors
+        return fresh[: self.settings.digest_limit], errors, topics
 
     async def _safe_fetch(self, source: Source) -> tuple[list[NewsItem], str | None]:
         fetcher = self.fetchers.get(source.source_type)
@@ -101,16 +113,30 @@ class DigestService:
         self.db.cleanup_seen(user_id)
 
 
-def format_digest(items: list[NewsItem], errors: list[str]) -> list[str]:
+def format_digest(
+    items: list[NewsItem],
+    errors: list[str],
+    topics: list[str] | None = None,
+) -> list[str]:
     """Split digest into Telegram-safe message chunks (<= 4000 chars)."""
+    topics = topics or []
+    topic_note = ""
+    if topics:
+        topic_note = "Темы: " + ", ".join(topics) + "\n"
+
     chunks: list[str] = []
     if not items:
         text = "Новых новостей с прошлого запроса нет."
+        if topics:
+            text = (
+                f"Новых новостей по темам ({', '.join(topics)}) "
+                "с прошлого запроса нет."
+            )
         if errors:
             text += "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
         return [text]
 
-    header = f"Сводка: {len(items)} новостей без дублей\n"
+    header = f"Сводка: {len(items)} новостей без дублей\n{topic_note}"
     lines = [header]
     for idx, item in enumerate(items, start=1):
         when = ""
