@@ -19,12 +19,11 @@ Telegram-бот, который собирает сводку новостей �
 - `/start`, `/help` — справка
 - `/add <тип> <id|url> [название]` — добавить источник
 - `/add telegram @a @b` — несколько Telegram-каналов сразу
-- `/addlist https://t.me/addlist/…` — все публичные каналы из папки
+- `/addlist https://t.me/addlist/…` — импорт папки (затем список @каналов)
 - `/remove <id>` — удалить
 - `/sources` — список
 - `/news` (или `/digest`) — сводка с прошлого запроса
 - `/reset` — сбросить курсор прошлого запроса
-- `/tg_login +телефон`, `/tg_code`, `/tg_status` — вход для разбора addlist
 
 ### Темы (фильтры)
 
@@ -57,14 +56,11 @@ Telegram-бот, который собирает сводку новостей �
 
 ### Папки каналов (`t.me/addlist`)
 
-Telegram отдаёт состав папки только пользовательскому API (боту нельзя). Один раз:
+1. Пришлите `/addlist https://t.me/addlist/…` (или просто ссылку).
+2. Бот покажет название папки.
+3. Пришлите публичные `@username` каналов из папки (через пробел или с новой строки).
 
-1. Создайте приложение на [my.telegram.org](https://my.telegram.org) → API development tools
-2. Пропишите `TELEGRAM_API_ID` и `TELEGRAM_API_HASH` в `.env`
-3. В боте: `/tg_login +79001234567` → `/tg_code 12345`
-4. Дальше: `/addlist https://t.me/addlist/…` или просто пришлите ссылку
-
-Сессия сохраняется в `TELEGRAM_SESSION_PATH` (по умолчанию рядом с SQLite). Добавляются только **публичные** каналы с `@username`.
+Либо сразу: `/add telegram @ch1 @ch2 https://t.me/ch3`.
 
 Дубли отсекаются по нормализованному заголовку, URL и похожести текстов между источниками. Уже показанные пользователю новости не повторяются.
 
@@ -130,8 +126,6 @@ export DEPLOY_USER=ubuntu
 | `DIGEST_LIMIT` | максимум новостей в одной сводке (по умолчанию 30) |
 | `DEFAULT_LOOKBACK_HOURS` | окно для первого `/news`, если ещё не было запросов |
 | `RSSHUB_BASE_URL` | базовый URL RSSHub для Facebook/Twitter |
-| `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` | пользовательский API для `/addlist` |
-| `TELEGRAM_SESSION_PATH` | файл сессии Telethon (по умолчанию рядом с БД) |
 | `LOG_LEVEL` | `INFO` / `DEBUG` |
 
 ## Замечания по Facebook / Twitter

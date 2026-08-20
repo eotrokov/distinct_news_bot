@@ -303,35 +303,35 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     kind = awaiting.get("kind")
 
     try:
+        if kind == "addlist_channels":
+            from bot.sources_ops import add_telegram_from_text, format_add_report
+
+            folder_title = str(awaiting.get("folder_title") or "")
+            added, skipped = add_telegram_from_text(db, user_id, text)
+            clear_awaiting(context)
+            await update.message.reply_text(
+                format_add_report(
+                    folder_title=folder_title or None,
+                    added=added,
+                    skipped=skipped,
+                ),
+                reply_markup=sources_keyboard(db.list_sources(user_id)),
+            )
+            return
+
         if kind == "source":
             source_type = str(awaiting.get("type"))
             if source_type == "telegram":
                 from bot.addlist import extract_addlist_slug, parse_telegram_handles
+                from bot.handlers import begin_addlist_import
                 from bot.sources_ops import (
-                    add_telegram_channels,
                     add_telegram_from_text,
                     format_add_report,
                 )
-                from bot.tg_user import TelegramUserError, TelegramUserGateway
 
                 if extract_addlist_slug(text) and "addlist" in text.lower():
-                    tg_user: TelegramUserGateway = context.application.bot_data["tg_user"]
-                    status = await update.message.reply_text("Читаю папку каналов…")
-                    try:
-                        title, channels = await tg_user.resolve_addlist(text)
-                        added, skipped = add_telegram_channels(db, user_id, channels)
-                        clear_awaiting(context)
-                        await status.edit_text(
-                            format_add_report(
-                                folder_title=title, added=added, skipped=skipped
-                            )
-                        )
-                        await update.message.reply_text(
-                            "Готово.",
-                            reply_markup=sources_keyboard(db.list_sources(user_id)),
-                        )
-                    except TelegramUserError as exc:
-                        await status.edit_text(str(exc))
+                    clear_awaiting(context)
+                    await begin_addlist_import(update, context, text)
                     return
 
                 handles = parse_telegram_handles(text)

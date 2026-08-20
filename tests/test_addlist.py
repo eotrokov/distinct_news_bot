@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from bot.addlist import (
-    extract_addlist_slug,
-    parse_telegram_handles,
-)
-from bot.sources_ops import add_telegram_channels, format_add_report
+import pytest
+
+from bot.addlist import extract_addlist_slug, parse_telegram_handles
 from bot.db import Database
+from bot.sources_ops import add_telegram_channels, format_add_report
 
 
 def test_extract_addlist_slug():
@@ -49,3 +48,34 @@ def test_format_add_report():
     assert "SEO каналы" in text
     assert "Добавлено (2)" in text
     assert "Уже были (1)" in text
+
+
+@pytest.mark.asyncio
+async def test_fetch_addlist_title_parses_og(monkeypatch: pytest.MonkeyPatch):
+    from bot import addlist as addlist_mod
+
+    class FakeResp:
+        text = '<meta property="og:title" content="Telegram Chats: SEO каналы">'
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url: str):
+            assert "addlist" in url
+            return FakeResp()
+
+    monkeypatch.setattr(addlist_mod.httpx, "AsyncClient", FakeClient)
+    title = await addlist_mod.fetch_addlist_title(
+        "https://t.me/addlist/_0flf9ViWOo0NjNi"
+    )
+    assert title == "SEO каналы"

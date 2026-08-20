@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+import httpx
+
 _ADDLIST_RE = re.compile(
     r"(?:https?://)?(?:t\.me|telegram\.me)/addlist/([A-Za-z0-9_-]+)",
     re.IGNORECASE,
@@ -10,6 +12,10 @@ _ADDLIST_RE = re.compile(
 _HANDLE_TOKEN_RE = re.compile(
     r"(?:https?://)?(?:t\.me|telegram\.me)/(?:s/)?@?([A-Za-z0-9_]{4,})"
     r"|^@?([A-Za-z0-9_]{4,})$",
+    re.IGNORECASE,
+)
+_OG_TITLE_RE = re.compile(
+    r'property="og:title"\s+content="([^"]*)"',
     re.IGNORECASE,
 )
 
@@ -26,7 +32,6 @@ def extract_addlist_slug(value: str) -> str | None:
     match = _ADDLIST_RE.search(text)
     if match:
         return match.group(1)
-    # Bare slug sometimes pasted after /addlist
     if re.fullmatch(r"[A-Za-z0-9_-]{8,}", text) and "://" not in text:
         return text
     return None
@@ -58,3 +63,34 @@ def parse_telegram_handles(text: str) -> list[str]:
         seen.add(key)
         handles.append(key)
     return handles
+
+
+async def fetch_addlist_title(url_or_slug: str, timeout: float = 20.0) -> str:
+    """Fetch public folder title from t.me/addlist page (no login)."""
+    slug = extract_addlist_slug(url_or_slug)
+    if not slug:
+        raise ValueError(
+            "Нужна ссылка вида https://t.me/addlist/XXXX"
+        )
+    url = f"https://t.me/addlist/{slug}"
+    try:
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+            headers={"User-Agent": "distinct-news-bot/0.1"},
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            html = response.text
+    except httpx.HTTPError as exc:
+        raise ValueError(f"Не удалось открыть папку: {url}") from exc
+
+    match = _OG_TITLE_RE.search(html)
+    if not match:
+        return f"addlist:{slug}"
+    title = match.group(1).strip()
+    # "Telegram Chats: SEO каналы" → "SEO каналы"
+    prefix = "Telegram Chats:"
+    if title.startswith(prefix):
+        title = title[len(prefix) :].strip()
+    return title or f"addlist:{slug}"

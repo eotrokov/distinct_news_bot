@@ -102,7 +102,8 @@ SOURCE_PROMPTS = {
         "Пришлите публичный канал:\n"
         "• @channel или https://t.me/channel\n"
         "• несколько каналов через пробел/строки\n"
-        "• папку каналов: https://t.me/addlist/…"
+        "• ссылку папки https://t.me/addlist/… "
+        "(затем список @каналов из папки)"
     ),
     "ria": "Пришлите ленту РИА: main / politics / world / … или URL RSS",
     "rss": "Пришлите URL RSS/Atom ленты",
