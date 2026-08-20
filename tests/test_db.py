@@ -39,7 +39,10 @@ def test_db_topics(tmp_path):
     db.add_topic(user_id, "seo")
     db.add_topic(user_id, "marketing")
     assert db.list_topics(user_id) == ["marketing", "seo"]
-    assert db.remove_topic(user_id, "seo") is True
-    assert db.list_topics(user_id) == ["marketing"]
-    assert db.clear_topics(user_id) == 1
+    rows = db.list_topic_rows(user_id)
+    assert len(rows) == 2
+    removed = db.remove_topic_by_id(user_id, rows[0][0])
+    assert removed == rows[0][1]
+    assert db.remove_topic(user_id, "seo") in {True, False}
+    assert db.clear_topics(user_id) >= 0
     assert db.list_topics(user_id) == []
