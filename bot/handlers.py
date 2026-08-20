@@ -15,7 +15,7 @@ from telegram.ext import (
 
 from bot.addlist import extract_addlist_slug, fetch_addlist_title, parse_telegram_handles
 from bot.db import Database
-from bot.digest import parse_add_args
+from bot.fetchers.telegram import normalize_telegram_handle
 from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
 from bot.menu import (
     cancel_awaiting,
@@ -30,7 +30,7 @@ from bot.menu import (
     show_topics_panel,
 )
 from bot.sources_ops import (
-    add_single_source,
+    add_telegram_channels,
     add_telegram_from_text,
     format_add_report,
 )
@@ -39,7 +39,7 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """\
-Бот собирает сводку новостей из ваших источников без дублей.
+Бот собирает сводку из ваших Telegram-каналов без дублей.
 
 Кнопки:
 • снизу экрана — быстрые действия
@@ -47,11 +47,10 @@ HELP_TEXT = """\
 
 Команды:
 /menu — открыть меню
-/add <тип> <id|url> [название] — добавить источник
-/add telegram @a @b — несколько каналов сразу
-/addlist <ссылка> — папка t.me/addlist/… (затем пришлите список @каналов)
-/remove <id> — удалить источник
-/sources — список источников
+/add @channel — добавить канал (можно несколько)
+/addlist <ссылка> — папка t.me/addlist/… (затем список @каналов)
+/remove <id> — удалить канал
+/sources — список каналов
 /topic add <тема> — добавить тему-фильтр
 /topic del <тема> — удалить тему
 /topics — список тем
@@ -61,20 +60,12 @@ HELP_TEXT = """\
 /cancel — отменить ввод
 /help — эта справка
 
-Если темы заданы, в сводку попадают только новости, где встречается хотя бы одна тема (в заголовке или тексте). Без тем — все новости.
-
-Типы источников:
-• telegram — публичный канал (@channel) или папка addlist
-• ria — лента РИА (main, politics, world, …) или URL RSS
-• rss — любой RSS/Atom URL
-• facebook — страница (нужен RSSHUB_BASE_URL) или URL RSS
-• twitter — аккаунт X/Twitter (нужен RSSHUB_BASE_URL) или URL RSS
+Если темы заданы, в сводку попадают только посты, где встречается хотя бы одна тема. Без тем — все посты.
 
 Примеры:
-/add telegram bbcnews
-/add telegram @ch1 @ch2 https://t.me/ch3
+/add @bbcnews
+/add @ch1 @ch2 https://t.me/ch3
 /addlist https://t.me/addlist/_0flf9ViWOo0NjNi
-/add ria main
 /topic add seo
 /news
 """
@@ -86,7 +77,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         db.ensure_user(update.effective_user.id)
     if update.message:
         await update.message.reply_text(
-            "Привет! Я соберу сводку новостей без дублей.\n"
+            "Привет! Сводка из Telegram-каналов без дублей.\n"
             "Управляйте кнопками внизу или через меню.",
             reply_markup=main_reply_keyboard(),
         )
@@ -116,49 +107,48 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     args = list(context.args or [])
     joined = " ".join(args)
 
-    if args and extract_addlist_slug(joined) and "addlist" in joined.lower():
+    if not args:
+        await update.message.reply_text(
+            "Формат: /add @channel\n"
+            "Несколько: /add @a @b\n"
+            "Папка: /addlist https://t.me/addlist/…"
+        )
+        return
+
+    if extract_addlist_slug(joined) and "addlist" in joined.lower():
         await begin_addlist_import(update, context, joined)
         return
 
-    try:
-        if len(args) >= 2 and args[0].lower() in {
-            "telegram",
-            "tg",
-            "channel",
-            "addlist",
-            "folder",
-            "list",
-        }:
-            rest = " ".join(args[1:])
-            if extract_addlist_slug(rest) and "addlist" in rest.lower():
-                await begin_addlist_import(update, context, rest)
-                return
-            handles = parse_telegram_handles(rest)
-            if len(handles) > 1:
-                added, skipped = add_telegram_from_text(db, user_id, rest)
-                await update.message.reply_text(
-                    format_add_report(folder_title=None, added=added, skipped=skipped),
-                    reply_markup=main_reply_keyboard(),
-                )
-                return
+    handles = parse_telegram_handles(joined)
+    # Strip optional leading type word already handled by parse_telegram_handles
+    # if user wrote "/add telegram @a @b"
+    if not handles and args[0].lower() in {"telegram", "tg", "channel"}:
+        handles = parse_telegram_handles(" ".join(args[1:]))
 
-        source_type, identifier, title = parse_add_args(args)
-        if (
-            source_type == "telegram"
-            and extract_addlist_slug(identifier)
-            and "addlist" in identifier.lower()
-        ):
-            await begin_addlist_import(update, context, identifier)
-            return
-        source = add_single_source(db, user_id, source_type, identifier, title)
-    except ValueError as exc:
-        await update.message.reply_text(str(exc))
+    if not handles:
+        await update.message.reply_text(
+            "Не нашёл каналов. Пример: /add @bbcnews https://t.me/meduzalive"
+        )
         return
 
+    if len(handles) == 1:
+        handle = normalize_telegram_handle(handles[0])
+        try:
+            source = db.add_source(user_id, "telegram", handle, f"@{handle}")
+        except ValueError as exc:
+            await update.message.reply_text(str(exc))
+            return
+        await update.message.reply_text(
+            f"Добавлен канал #{source.id}: {source.title}\n"
+            f"`{source.identifier}`",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=main_reply_keyboard(),
+        )
+        return
+
+    added, skipped = add_telegram_channels(db, user_id, handles)
     await update.message.reply_text(
-        f"Добавлен источник #{source.id}: [{source.source_type}] {source.title}\n"
-        f"`{source.identifier}`",
-        parse_mode=ParseMode.MARKDOWN,
+        format_add_report(folder_title=None, added=added, skipped=skipped),
         reply_markup=main_reply_keyboard(),
     )
 
@@ -183,7 +173,6 @@ async def begin_addlist_import(
 ) -> None:
     if not update.message or not update.effective_user:
         return
-    # If the same message already contains channel handles — add immediately.
     handles = parse_telegram_handles(raw)
     if handles:
         db: Database = context.application.bot_data["db"]
@@ -232,9 +221,9 @@ async def remove_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     source_id = int(args[0])
     ok = db.remove_source(update.effective_user.id, source_id)
     if ok:
-        await update.message.reply_text(f"Источник #{source_id} удалён.")
+        await update.message.reply_text(f"Канал #{source_id} удалён.")
     else:
-        await update.message.reply_text("Источник не найден.")
+        await update.message.reply_text("Канал не найден.")
 
 
 async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -5,8 +5,10 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from bot.addlist import extract_addlist_slug, parse_telegram_handles
 from bot.db import Database
-from bot.digest import DigestService, format_digest, parse_add_args
+from bot.digest import DigestService, format_digest
+from bot.fetchers.telegram import normalize_telegram_handle
 from bot.keyboards import (
     BTN_HELP,
     BTN_MENU,
@@ -15,14 +17,14 @@ from bot.keyboards import (
     BTN_SOURCES,
     BTN_TOPICS,
     REPLY_BUTTONS,
-    SOURCE_PROMPTS,
+    TELEGRAM_PROMPT,
     back_home_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
-    source_type_keyboard,
     sources_keyboard,
     topics_keyboard,
 )
+from bot.sources_ops import add_telegram_channels, add_telegram_from_text, format_add_report
 from bot.topics import parse_topic_args
 
 logger = logging.getLogger(__name__)
@@ -98,12 +100,12 @@ def sources_text(db: Database, user_id: int) -> str:
     sources = db.list_sources(user_id)
     if not sources:
         return (
-            "Источников пока нет.\n"
-            "Нажмите «Добавить источник» или используйте /add"
+            "Каналов пока нет.\n"
+            "Нажмите «Добавить канал» или используйте /add"
         )
-    lines = ["Ваши источники (нажмите, чтобы удалить):"]
+    lines = ["Ваши каналы (нажмите, чтобы удалить):"]
     for s in sources:
-        lines.append(f"#{s.id} [{s.source_type}] {s.title}\n  {s.identifier}")
+        lines.append(f"#{s.id} {s.title}\n  {s.identifier}")
     return "\n".join(lines)
 
 
@@ -196,28 +198,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
     if data == "m:src_add":
-        clear_awaiting(context)
+        set_awaiting(context, {"kind": "source"})
         await query.edit_message_text(
-            "Выберите тип источника:",
-            reply_markup=source_type_keyboard(),
-        )
-        return
-    if data.startswith("m:src_type:"):
-        source_type = data.split(":", 2)[2]
-        if source_type not in SOURCE_PROMPTS:
-            await query.answer("Неизвестный тип", show_alert=True)
-            return
-        set_awaiting(context, {"kind": "source", "type": source_type})
-        prompt = SOURCE_PROMPTS[source_type]
-        await query.edit_message_text(
-            f"{prompt}\n\nИли /cancel чтобы отменить.",
+            f"{TELEGRAM_PROMPT}\n\nИли /cancel чтобы отменить.",
             reply_markup=back_home_keyboard(),
         )
         return
     if data.startswith("m:src_del:"):
         source_id = int(data.split(":")[2])
         ok = db.remove_source(user_id, source_id)
-        note = f"Источник #{source_id} удалён.\n\n" if ok else "Источник не найден.\n\n"
+        note = f"Канал #{source_id} удалён.\n\n" if ok else "Канал не найден.\n\n"
         text = note + sources_text(db, user_id)
         await query.edit_message_text(
             text, reply_markup=sources_keyboard(db.list_sources(user_id))
@@ -260,7 +250,6 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if text not in REPLY_BUTTONS:
         return
 
-    # Reply buttons cancel any pending input.
     clear_awaiting(context)
     db: Database = context.application.bot_data["db"]
     db.ensure_user(update.effective_user.id)
@@ -304,8 +293,6 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         if kind == "addlist_channels":
-            from bot.sources_ops import add_telegram_from_text, format_add_report
-
             folder_title = str(awaiting.get("folder_title") or "")
             added, skipped = add_telegram_from_text(db, user_id, text)
             clear_awaiting(context)
@@ -320,37 +307,33 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
 
         if kind == "source":
-            source_type = str(awaiting.get("type"))
-            if source_type == "telegram":
-                from bot.addlist import extract_addlist_slug, parse_telegram_handles
-                from bot.handlers import begin_addlist_import
-                from bot.sources_ops import (
-                    add_telegram_from_text,
-                    format_add_report,
+            from bot.handlers import begin_addlist_import
+
+            if extract_addlist_slug(text) and "addlist" in text.lower():
+                clear_awaiting(context)
+                await begin_addlist_import(update, context, text)
+                return
+
+            handles = parse_telegram_handles(text)
+            if not handles:
+                raise ValueError(
+                    "Не нашёл каналов. Пример: @bbcnews https://t.me/meduzalive"
                 )
+            if len(handles) == 1:
+                handle = normalize_telegram_handle(handles[0])
+                source = db.add_source(user_id, "telegram", handle, f"@{handle}")
+                clear_awaiting(context)
+                await update.message.reply_text(
+                    f"Добавлен канал #{source.id}: {source.title}\n"
+                    f"{source.identifier}",
+                    reply_markup=sources_keyboard(db.list_sources(user_id)),
+                )
+                return
 
-                if extract_addlist_slug(text) and "addlist" in text.lower():
-                    clear_awaiting(context)
-                    await begin_addlist_import(update, context, text)
-                    return
-
-                handles = parse_telegram_handles(text)
-                if len(handles) > 1:
-                    added, skipped = add_telegram_from_text(db, user_id, text)
-                    clear_awaiting(context)
-                    await update.message.reply_text(
-                        format_add_report(
-                            folder_title=None, added=added, skipped=skipped
-                        ),
-                        reply_markup=sources_keyboard(db.list_sources(user_id)),
-                    )
-                    return
-
-            source = _add_source_from_text(db, user_id, source_type, text)
+            added, skipped = add_telegram_channels(db, user_id, handles)
             clear_awaiting(context)
             await update.message.reply_text(
-                f"Добавлен источник #{source.id}: [{source.source_type}] {source.title}\n"
-                f"{source.identifier}",
+                format_add_report(folder_title=None, added=added, skipped=skipped),
                 reply_markup=sources_keyboard(db.list_sources(user_id)),
             )
             return
@@ -381,22 +364,6 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
     except ValueError as exc:
         await update.message.reply_text(f"{exc}\nПопробуйте ещё раз или /cancel")
-
-
-def _add_source_from_text(
-    db: Database, user_id: int, source_type: str, raw: str
-):
-    from bot.sources_ops import add_single_source
-
-    # Reuse /add parser with synthetic args.
-    source_type, identifier, title = parse_add_args([source_type, *raw.split()])
-    # For rss/facebook/twitter URLs with spaces broken by split — if raw is a URL, use it whole.
-    if source_type in {"rss", "facebook", "twitter"} and (
-        raw.startswith("http://") or raw.startswith("https://")
-    ):
-        identifier = raw.strip()
-        title = title if title and not title.startswith("http") else identifier[:60]
-    return add_single_source(db, user_id, source_type, identifier, title)
 
 
 async def cancel_awaiting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

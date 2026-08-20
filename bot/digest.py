@@ -7,14 +7,7 @@ from datetime import datetime, timedelta, timezone
 from bot.config import Settings
 from bot.db import Database
 from bot.dedupe import deduplicate, fingerprint_for
-from bot.fetchers import (
-    FacebookFetcher,
-    FetchError,
-    RiaFetcher,
-    RssFetcher,
-    TelegramChannelFetcher,
-    TwitterFetcher,
-)
+from bot.fetchers import FetchError, TelegramChannelFetcher
 from bot.models import NewsItem, Source, SourceType
 from bot.topics import item_matches_topics
 
@@ -25,20 +18,15 @@ class DigestService:
     def __init__(self, db: Database, settings: Settings) -> None:
         self.db = db
         self.settings = settings
-        self.rss = RssFetcher(timeout=settings.fetch_timeout_seconds)
         self.fetchers = {
-            "rss": self.rss,
             "telegram": TelegramChannelFetcher(timeout=settings.fetch_timeout_seconds),
-            "ria": RiaFetcher(self.rss),
-            "facebook": FacebookFetcher(self.rss, settings.rsshub_base_url),
-            "twitter": TwitterFetcher(self.rss, settings.rsshub_base_url),
         }
 
     async def collect_for_user(self, user_id: int) -> tuple[list[NewsItem], list[str], list[str]]:
         """Return (items, errors, active_topics)."""
         sources = self.db.list_sources(user_id)
         if not sources:
-            return [], ["Нет источников. Добавьте через /add"], self.db.list_topics(user_id)
+            return [], ["Нет каналов. Добавьте через /add"], self.db.list_topics(user_id)
 
         topics = self.db.list_topics(user_id)
 
@@ -144,7 +132,7 @@ def format_digest(
             when = item.published_at.astimezone(timezone.utc).strftime("%d.%m %H:%M UTC")
         link = f"\n{item.url}" if item.url else ""
         block = (
-            f"\n{idx}. [{item.source_type}] {item.source_name}\n"
+            f"\n{idx}. {item.source_name}\n"
             f"{item.title}"
             f"{link}"
             f"{f' ({when})' if when else ''}\n"
@@ -171,45 +159,35 @@ def format_digest(
 
 
 def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
-    """Parse /add arguments into (type, identifier, title)."""
-    if len(args) < 2:
+    """Parse /add arguments into (type, identifier, title).
+
+    Accepts:
+      /add @channel
+      /add channel
+      /add telegram @channel [название]
+      /add tg https://t.me/channel
+    """
+    if not args:
         raise ValueError(
-            "Формат: /add <telegram|rss|ria|facebook|twitter> <id_или_url> [название]\n"
-            "Папка каналов: /addlist https://t.me/addlist/…"
+            "Формат: /add @channel\n"
+            "Несколько: /add @a @b\n"
+            "Папка: /addlist https://t.me/addlist/…"
         )
-    raw_type = args[0].lower().strip()
-    aliases = {
-        "tg": "telegram",
-        "channel": "telegram",
-        "fb": "facebook",
-        "x": "twitter",
-        "tw": "twitter",
-        "twitter/x": "twitter",
-        "addlist": "telegram",
-        "folder": "telegram",
-        "list": "telegram",
-    }
-    source_type = aliases.get(raw_type, raw_type)
-    if source_type not in {"telegram", "rss", "ria", "facebook", "twitter"}:
-        raise ValueError(
-            "Тип источника: telegram, rss, ria, facebook, twitter "
-            "(или /addlist для папки каналов)"
-        )
-    identifier = args[1].strip()
-    title = " ".join(args[2:]).strip() if len(args) > 2 else ""
+
+    tokens = list(args)
+    if tokens[0].lower() in {"telegram", "tg", "channel", "addlist", "folder", "list"}:
+        tokens = tokens[1:]
+    if not tokens:
+        raise ValueError("Укажите канал: /add @channel")
+
+    identifier = tokens[0].strip()
+    title = " ".join(tokens[1:]).strip()
     if not title:
-        title = _default_title(source_type, identifier)  # type: ignore[arg-type]
-    return source_type, identifier, title  # type: ignore[return-value]
-
-
-def _default_title(source_type: SourceType, identifier: str) -> str:
-    if source_type == "telegram":
         handle = identifier.lstrip("@").split("/")[-1]
-        return f"@{handle}"
-    if source_type == "ria":
-        return f"РИА ({identifier})"
-    if source_type == "twitter":
-        return f"@{identifier.lstrip('@')}"
-    if source_type == "facebook":
-        return f"FB:{identifier}"
-    return identifier[:60]
+        title = f"@{handle}"
+    return "telegram", identifier, title
+
+
+def _default_title(_source_type: SourceType, identifier: str) -> str:
+    handle = identifier.lstrip("@").split("/")[-1]
+    return f"@{handle}"

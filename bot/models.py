@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-
-SourceType = Literal["telegram", "rss", "ria", "facebook", "twitter"]
+SourceType = Literal["telegram"]
 
 
 @dataclass(frozen=True)
