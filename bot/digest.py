@@ -174,7 +174,8 @@ def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
     """Parse /add arguments into (type, identifier, title)."""
     if len(args) < 2:
         raise ValueError(
-            "Формат: /add <telegram|rss|ria|facebook|twitter> <id_или_url> [название]"
+            "Формат: /add <telegram|rss|ria|facebook|twitter> <id_или_url> [название]\n"
+            "Папка каналов: /addlist https://t.me/addlist/…"
         )
     raw_type = args[0].lower().strip()
     aliases = {
@@ -184,11 +185,15 @@ def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
         "x": "twitter",
         "tw": "twitter",
         "twitter/x": "twitter",
+        "addlist": "telegram",
+        "folder": "telegram",
+        "list": "telegram",
     }
     source_type = aliases.get(raw_type, raw_type)
     if source_type not in {"telegram", "rss", "ria", "facebook", "twitter"}:
         raise ValueError(
-            "Тип источника: telegram, rss, ria, facebook, twitter"
+            "Тип источника: telegram, rss, ria, facebook, twitter "
+            "(или /addlist для папки каналов)"
         )
     identifier = args[1].strip()
     title = " ".join(args[2:]).strip() if len(args) > 2 else ""

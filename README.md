@@ -8,7 +8,7 @@ Telegram-бот, который собирает сводку новостей �
 
 | Тип | Что указать | Как читаем |
 | --- | --- | --- |
-| `telegram` | `@channel` / `channel` / `https://t.me/channel` | публичный превью `t.me/s/...` |
+| `telegram` | `@channel` / `channel` / `https://t.me/channel` / несколько сразу / `https://t.me/addlist/…` | публичный превью `t.me/s/...` |
 | `ria` | `main`, `politics`, `world`, … или URL RSS | официальный RSS РИА |
 | `rss` | любой RSS/Atom URL | feedparser |
 | `facebook` | имя страницы или URL RSS | RSSHub (`RSSHUB_BASE_URL`) либо прямой RSS |
@@ -18,6 +18,8 @@ Telegram-бот, который собирает сводку новостей �
 
 - `/start`, `/help` — справка
 - `/add <тип> <id|url> [название]` — добавить источник
+- `/add telegram @a @b` — несколько Telegram-каналов сразу
+- `/addlist https://t.me/addlist/…` — импорт папки (затем список @каналов)
 - `/remove <id>` — удалить
 - `/sources` — список
 - `/news` (или `/digest`) — сводка с прошлого запроса
@@ -35,14 +37,30 @@ Telegram-бот, который собирает сводку новостей �
 
 Синонимы: `/filter`, `/filters`.
 
+### Кнопки
+
+- Reply-кнопки внизу экрана: Сводка / Источники / Темы / Меню / Помощь / Сброс курсора
+- `/menu` — inline-меню: сводка, управление источниками и темами (добавление/удаление)
+- При добавлении бот просит прислать значение следующим сообщением (`/cancel` — отмена)
+
 Примеры:
 
 ```text
 /add telegram meduzalive
+/add telegram @ch1 @ch2 https://t.me/ch3
+/addlist https://t.me/addlist/_0flf9ViWOo0NjNi
 /add ria main
 /topic add seo
 /news
 ```
+
+### Папки каналов (`t.me/addlist`)
+
+1. Пришлите `/addlist https://t.me/addlist/…` (или просто ссылку).
+2. Бот покажет название папки.
+3. Пришлите публичные `@username` каналов из папки (через пробел или с новой строки).
+
+Либо сразу: `/add telegram @ch1 @ch2 https://t.me/ch3`.
 
 Дубли отсекаются по нормализованному заголовку, URL и похожести текстов между источниками. Уже показанные пользователю новости не повторяются.
 

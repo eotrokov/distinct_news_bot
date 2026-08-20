@@ -7,6 +7,8 @@ __pycache__
 .env
 data/
 *.sqlite3
+*.session
+*.session-journal
 *.egg-info
 dist
 build

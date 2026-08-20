@@ -6,14 +6,34 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
+from bot.addlist import extract_addlist_slug, fetch_addlist_title, parse_telegram_handles
 from bot.db import Database
-from bot.digest import DigestService, format_digest, parse_add_args
-from bot.fetchers.ria import RIA_FEEDS
-from bot.fetchers.telegram import normalize_telegram_handle
+from bot.digest import parse_add_args
+from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
+from bot.menu import (
+    cancel_awaiting,
+    get_awaiting,
+    on_awaiting_text,
+    on_callback,
+    on_reply_button,
+    send_digest_to_chat,
+    set_awaiting,
+    show_main_menu,
+    show_sources_panel,
+    show_topics_panel,
+)
+from bot.sources_ops import (
+    add_single_source,
+    add_telegram_from_text,
+    format_add_report,
+)
 from bot.topics import parse_topic_args
 
 logger = logging.getLogger(__name__)
@@ -21,8 +41,15 @@ logger = logging.getLogger(__name__)
 HELP_TEXT = """\
 Бот собирает сводку новостей из ваших источников без дублей.
 
+Кнопки:
+• снизу экрана — быстрые действия
+• /menu — подробное inline-меню
+
 Команды:
+/menu — открыть меню
 /add <тип> <id|url> [название] — добавить источник
+/add telegram @a @b — несколько каналов сразу
+/addlist <ссылка> — папка t.me/addlist/… (затем пришлите список @каналов)
 /remove <id> — удалить источник
 /sources — список источников
 /topic add <тема> — добавить тему-фильтр
@@ -31,12 +58,13 @@ HELP_TEXT = """\
 /topic clear — сбросить все темы
 /news — сводка с прошлого запроса
 /reset — сбросить точку прошлого запроса
+/cancel — отменить ввод
 /help — эта справка
 
 Если темы заданы, в сводку попадают только новости, где встречается хотя бы одна тема (в заголовке или тексте). Без тем — все новости.
 
 Типы источников:
-• telegram — публичный канал (@channel)
+• telegram — публичный канал (@channel) или папка addlist
 • ria — лента РИА (main, politics, world, …) или URL RSS
 • rss — любой RSS/Atom URL
 • facebook — страница (нужен RSSHUB_BASE_URL) или URL RSS
@@ -44,9 +72,10 @@ HELP_TEXT = """\
 
 Примеры:
 /add telegram bbcnews
+/add telegram @ch1 @ch2 https://t.me/ch3
+/addlist https://t.me/addlist/_0flf9ViWOo0NjNi
 /add ria main
 /topic add seo
-/topic add marketing, ai
 /news
 """
 
@@ -57,13 +86,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         db.ensure_user(update.effective_user.id)
     if update.message:
         await update.message.reply_text(
-            "Привет! Я соберу сводку новостей без дублей.\n\n" + HELP_TEXT
+            "Привет! Я соберу сводку новостей без дублей.\n"
+            "Управляйте кнопками внизу или через меню.",
+            reply_markup=main_reply_keyboard(),
+        )
+        await update.message.reply_text(
+            "Меню:",
+            reply_markup=main_inline_keyboard(),
         )
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text(HELP_TEXT)
+        await update.message.reply_text(HELP_TEXT, reply_markup=main_reply_keyboard())
+
+
+async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db: Database = context.application.bot_data["db"]
+    if update.effective_user:
+        db.ensure_user(update.effective_user.id)
+    await show_main_menu(update, context)
 
 
 async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -71,19 +113,44 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     db: Database = context.application.bot_data["db"]
     user_id = update.effective_user.id
+    args = list(context.args or [])
+    joined = " ".join(args)
+
+    if args and extract_addlist_slug(joined) and "addlist" in joined.lower():
+        await begin_addlist_import(update, context, joined)
+        return
+
     try:
-        source_type, identifier, title = parse_add_args(context.args or [])
-        if source_type == "telegram":
-            identifier = normalize_telegram_handle(identifier)
-        if source_type == "ria" and not (
-            identifier.startswith("http://") or identifier.startswith("https://")
+        if len(args) >= 2 and args[0].lower() in {
+            "telegram",
+            "tg",
+            "channel",
+            "addlist",
+            "folder",
+            "list",
+        }:
+            rest = " ".join(args[1:])
+            if extract_addlist_slug(rest) and "addlist" in rest.lower():
+                await begin_addlist_import(update, context, rest)
+                return
+            handles = parse_telegram_handles(rest)
+            if len(handles) > 1:
+                added, skipped = add_telegram_from_text(db, user_id, rest)
+                await update.message.reply_text(
+                    format_add_report(folder_title=None, added=added, skipped=skipped),
+                    reply_markup=main_reply_keyboard(),
+                )
+                return
+
+        source_type, identifier, title = parse_add_args(args)
+        if (
+            source_type == "telegram"
+            and extract_addlist_slug(identifier)
+            and "addlist" in identifier.lower()
         ):
-            key = identifier.lower()
-            if key not in RIA_FEEDS:
-                known = ", ".join(sorted(RIA_FEEDS))
-                raise ValueError(f"Лента РИА: {known} или полный URL RSS")
-            identifier = key
-        source = db.add_source(user_id, source_type, identifier, title)
+            await begin_addlist_import(update, context, identifier)
+            return
+        source = add_single_source(db, user_id, source_type, identifier, title)
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
@@ -92,6 +159,65 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Добавлен источник #{source.id}: [{source.source_type}] {source.title}\n"
         f"`{source.identifier}`",
         parse_mode=ParseMode.MARKDOWN,
+        reply_markup=main_reply_keyboard(),
+    )
+
+
+async def addlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "Формат: /addlist https://t.me/addlist/XXXX\n"
+            "Затем пришлите список публичных каналов (@name …)."
+        )
+        return
+    await begin_addlist_import(update, context, " ".join(args))
+
+
+async def begin_addlist_import(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    raw: str,
+) -> None:
+    if not update.message or not update.effective_user:
+        return
+    # If the same message already contains channel handles — add immediately.
+    handles = parse_telegram_handles(raw)
+    if handles:
+        db: Database = context.application.bot_data["db"]
+        added, skipped = add_telegram_from_text(
+            db, update.effective_user.id, raw
+        )
+        title = None
+        try:
+            title = await fetch_addlist_title(raw)
+        except ValueError:
+            title = None
+        await update.message.reply_text(
+            format_add_report(folder_title=title, added=added, skipped=skipped),
+            reply_markup=main_reply_keyboard(),
+        )
+        return
+
+    status = await update.message.reply_text("Открываю папку…")
+    try:
+        title = await fetch_addlist_title(raw)
+    except ValueError as exc:
+        await status.edit_text(str(exc))
+        return
+
+    set_awaiting(
+        context,
+        {"kind": "addlist_channels", "folder_title": title, "raw": raw},
+    )
+    await status.edit_text(
+        f"Папка: «{title}»\n\n"
+        "Пришлите публичные каналы из папки (@username или https://t.me/…)\n"
+        "через пробел или с новой строки.\n\n"
+        "Пример: @channel1 @channel2\n"
+        "/cancel — отмена"
     )
 
 
@@ -114,15 +240,7 @@ async def remove_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_user:
         return
-    db: Database = context.application.bot_data["db"]
-    sources = db.list_sources(update.effective_user.id)
-    if not sources:
-        await update.message.reply_text("Источников нет. Добавьте через /add")
-        return
-    lines = ["Ваши источники:"]
-    for s in sources:
-        lines.append(f"#{s.id} [{s.source_type}] {s.title}\n  {s.identifier}")
-    await update.message.reply_text("\n".join(lines))
+    await show_sources_panel(update, context)
 
 
 async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -132,13 +250,7 @@ async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     args = list(context.args or [])
     if not args:
-        await update.message.reply_text(
-            "Формат:\n"
-            "/topic add seo\n"
-            "/topic del seo\n"
-            "/topic list\n"
-            "/topic clear"
-        )
+        await show_topics_panel(update, context)
         return
 
     action = args[0].lower()
@@ -181,7 +293,7 @@ async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
         if action in {"list", "ls", "show"}:
-            await _reply_topics(update, db, user_id)
+            await show_topics_panel(update, context)
             return
 
         if action in {"clear", "reset", "all"}:
@@ -191,7 +303,6 @@ async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-        # Shortcut: /topic seo  → add
         topics = parse_topic_args(args)
         added = []
         for topic in topics:
@@ -214,43 +325,11 @@ async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def topics_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_user:
         return
-    db: Database = context.application.bot_data["db"]
-    await _reply_topics(update, db, update.effective_user.id)
-
-
-async def _reply_topics(update: Update, db: Database, user_id: int) -> None:
-    topics = db.list_topics(user_id)
-    if not update.message:
-        return
-    if not topics:
-        await update.message.reply_text(
-            "Темы не заданы — /news показывает все новости.\n"
-            "Добавить: /topic add seo"
-        )
-        return
-    await update.message.reply_text(
-        "Активные темы (OR-фильтр):\n" + "\n".join(f"• {t}" for t in topics)
-    )
+    await show_topics_panel(update, context)
 
 
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
-        return
-    digest: DigestService = context.application.bot_data["digest"]
-    user_id = update.effective_user.id
-    await update.message.reply_text("Собираю сводку…")
-    try:
-        items, errors, topics = await digest.collect_for_user(user_id)
-    except Exception:  # noqa: BLE001
-        logger.exception("Digest failed for user %s", user_id)
-        await update.message.reply_text("Не удалось собрать сводку. Попробуйте позже.")
-        return
-
-    chunks = format_digest(items, errors, topics)
-    for chunk in chunks:
-        await update.message.reply_text(chunk)
-
-    digest.mark_digest_delivered(user_id, items)
+    await send_digest_to_chat(update, context)
 
 
 async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -260,14 +339,33 @@ async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     db.reset_last_digest_at(update.effective_user.id)
     await update.message.reply_text(
         "Точка прошлого запроса сброшена. Следующий /news возьмёт новости "
-        "за период DEFAULT_LOOKBACK_HOURS."
+        "за период DEFAULT_LOOKBACK_HOURS.",
+        reply_markup=main_reply_keyboard(),
     )
+
+
+async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route plain text to reply-buttons or awaiting input."""
+    if not update.message or not update.message.text:
+        return
+    text = update.message.text.strip()
+    if text in REPLY_BUTTONS:
+        await on_reply_button(update, context)
+        return
+    if get_awaiting(context):
+        await on_awaiting_text(update, context)
+        return
+    if extract_addlist_slug(text) and "addlist" in text.lower():
+        await begin_addlist_import(update, context, text)
 
 
 def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("menu", menu_cmd))
+    app.add_handler(CommandHandler("cancel", cancel_awaiting))
     app.add_handler(CommandHandler("add", add_source))
+    app.add_handler(CommandHandler("addlist", addlist_cmd))
     app.add_handler(CommandHandler("remove", remove_source))
     app.add_handler(CommandHandler("sources", list_sources))
     app.add_handler(CommandHandler("topic", topic_cmd))
@@ -277,3 +375,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("news", news))
     app.add_handler(CommandHandler("digest", news))
     app.add_handler(CommandHandler("reset", reset_cursor))
+    app.add_handler(CallbackQueryHandler(on_callback, pattern=r"^m:"))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, text_router)
+    )

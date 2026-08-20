@@ -1,0 +1,409 @@
+from __future__ import annotations
+
+import logging
+
+from telegram import Update
+from telegram.ext import ContextTypes
+
+from bot.db import Database
+from bot.digest import DigestService, format_digest, parse_add_args
+from bot.keyboards import (
+    BTN_HELP,
+    BTN_MENU,
+    BTN_NEWS,
+    BTN_RESET,
+    BTN_SOURCES,
+    BTN_TOPICS,
+    REPLY_BUTTONS,
+    SOURCE_PROMPTS,
+    back_home_keyboard,
+    main_inline_keyboard,
+    main_reply_keyboard,
+    source_type_keyboard,
+    sources_keyboard,
+    topics_keyboard,
+)
+from bot.topics import parse_topic_args
+
+logger = logging.getLogger(__name__)
+
+AWAITING_KEY = "awaiting"
+
+MENU_TEXT = (
+    "Управление ботом кнопками.\n"
+    "Снизу — быстрые кнопки, здесь — подробное меню."
+)
+
+
+def clear_awaiting(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop(AWAITING_KEY, None)
+
+
+def set_awaiting(context: ContextTypes.DEFAULT_TYPE, payload: dict) -> None:
+    context.user_data[AWAITING_KEY] = payload
+
+
+def get_awaiting(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
+    value = context.user_data.get(AWAITING_KEY)
+    return value if isinstance(value, dict) else None
+
+
+async def show_main_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    edit: bool = False,
+) -> None:
+    clear_awaiting(context)
+    text = MENU_TEXT
+    markup = main_inline_keyboard()
+    if edit and update.callback_query and update.callback_query.message:
+        await update.callback_query.edit_message_text(text, reply_markup=markup)
+        return
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            "Быстрые кнопки внизу экрана.",
+            reply_markup=main_reply_keyboard(),
+        )
+        await update.effective_message.reply_text(text, reply_markup=markup)
+
+
+async def send_digest_to_chat(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if not update.effective_user or not update.effective_message:
+        return
+    digest: DigestService = context.application.bot_data["digest"]
+    user_id = update.effective_user.id
+    status = await update.effective_message.reply_text("Собираю сводку…")
+    try:
+        items, errors, topics = await digest.collect_for_user(user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("Digest failed for user %s", user_id)
+        await status.edit_text("Не удалось собрать сводку. Попробуйте позже.")
+        return
+
+    chunks = format_digest(items, errors, topics)
+    await status.edit_text(chunks[0])
+    for chunk in chunks[1:]:
+        await update.effective_message.reply_text(chunk)
+    digest.mark_digest_delivered(user_id, items)
+    await update.effective_message.reply_text(
+        "Готово.", reply_markup=back_home_keyboard()
+    )
+
+
+def sources_text(db: Database, user_id: int) -> str:
+    sources = db.list_sources(user_id)
+    if not sources:
+        return (
+            "Источников пока нет.\n"
+            "Нажмите «Добавить источник» или используйте /add"
+        )
+    lines = ["Ваши источники (нажмите, чтобы удалить):"]
+    for s in sources:
+        lines.append(f"#{s.id} [{s.source_type}] {s.title}\n  {s.identifier}")
+    return "\n".join(lines)
+
+
+def topics_text(db: Database, user_id: int) -> str:
+    rows = db.list_topic_rows(user_id)
+    if not rows:
+        return (
+            "Темы не заданы — сводка без фильтра.\n"
+            "Нажмите «Добавить тему» или /topic add seo"
+        )
+    lines = ["Активные темы (OR-фильтр). Нажмите тему, чтобы удалить:"]
+    for _, topic in rows:
+        lines.append(f"• {topic}")
+    return "\n".join(lines)
+
+
+async def show_sources_panel(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    edit: bool = False,
+) -> None:
+    clear_awaiting(context)
+    if not update.effective_user:
+        return
+    db: Database = context.application.bot_data["db"]
+    user_id = update.effective_user.id
+    text = sources_text(db, user_id)
+    markup = sources_keyboard(db.list_sources(user_id))
+    if edit and update.callback_query and update.callback_query.message:
+        await update.callback_query.edit_message_text(text, reply_markup=markup)
+    elif update.effective_message:
+        await update.effective_message.reply_text(text, reply_markup=markup)
+
+
+async def show_topics_panel(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    edit: bool = False,
+) -> None:
+    clear_awaiting(context)
+    if not update.effective_user:
+        return
+    db: Database = context.application.bot_data["db"]
+    user_id = update.effective_user.id
+    text = topics_text(db, user_id)
+    markup = topics_keyboard(db.list_topic_rows(user_id))
+    if edit and update.callback_query and update.callback_query.message:
+        await update.callback_query.edit_message_text(text, reply_markup=markup)
+    elif update.effective_message:
+        await update.effective_message.reply_text(text, reply_markup=markup)
+
+
+async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if not query or not update.effective_user:
+        return
+    await query.answer()
+    data = query.data or ""
+    db: Database = context.application.bot_data["db"]
+    user_id = update.effective_user.id
+    db.ensure_user(user_id)
+
+    if data == "m:home":
+        await show_main_menu(update, context, edit=True)
+        return
+    if data == "m:news":
+        clear_awaiting(context)
+        await send_digest_to_chat(update, context)
+        return
+    if data == "m:sources":
+        await show_sources_panel(update, context, edit=True)
+        return
+    if data == "m:topics":
+        await show_topics_panel(update, context, edit=True)
+        return
+    if data == "m:help":
+        clear_awaiting(context)
+        from bot.handlers import HELP_TEXT
+
+        await query.edit_message_text(HELP_TEXT, reply_markup=back_home_keyboard())
+        return
+    if data == "m:reset":
+        clear_awaiting(context)
+        db.reset_last_digest_at(user_id)
+        await query.edit_message_text(
+            "Точка прошлого запроса сброшена.",
+            reply_markup=back_home_keyboard(),
+        )
+        return
+    if data == "m:src_add":
+        clear_awaiting(context)
+        await query.edit_message_text(
+            "Выберите тип источника:",
+            reply_markup=source_type_keyboard(),
+        )
+        return
+    if data.startswith("m:src_type:"):
+        source_type = data.split(":", 2)[2]
+        if source_type not in SOURCE_PROMPTS:
+            await query.answer("Неизвестный тип", show_alert=True)
+            return
+        set_awaiting(context, {"kind": "source", "type": source_type})
+        prompt = SOURCE_PROMPTS[source_type]
+        await query.edit_message_text(
+            f"{prompt}\n\nИли /cancel чтобы отменить.",
+            reply_markup=back_home_keyboard(),
+        )
+        return
+    if data.startswith("m:src_del:"):
+        source_id = int(data.split(":")[2])
+        ok = db.remove_source(user_id, source_id)
+        note = f"Источник #{source_id} удалён.\n\n" if ok else "Источник не найден.\n\n"
+        text = note + sources_text(db, user_id)
+        await query.edit_message_text(
+            text, reply_markup=sources_keyboard(db.list_sources(user_id))
+        )
+        return
+    if data == "m:topic_add":
+        set_awaiting(context, {"kind": "topic"})
+        await query.edit_message_text(
+            "Пришлите тему или несколько через запятую/пробел.\n"
+            "Пример: seo\nПример: marketing ai\n\n/cancel — отмена.",
+            reply_markup=back_home_keyboard(),
+        )
+        return
+    if data.startswith("m:topic_del:"):
+        topic_id = int(data.split(":")[2])
+        removed = db.remove_topic_by_id(user_id, topic_id)
+        note = (
+            f"Тема «{removed}» удалена.\n\n"
+            if removed
+            else "Тема не найдена.\n\n"
+        )
+        text = note + topics_text(db, user_id)
+        await query.edit_message_text(
+            text, reply_markup=topics_keyboard(db.list_topic_rows(user_id))
+        )
+        return
+    if data == "m:topic_clear":
+        count = db.clear_topics(user_id)
+        await query.edit_message_text(
+            f"Сброшено тем: {count}.\n\n" + topics_text(db, user_id),
+            reply_markup=topics_keyboard(db.list_topic_rows(user_id)),
+        )
+        return
+
+
+async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user or not update.message.text:
+        return
+    text = update.message.text.strip()
+    if text not in REPLY_BUTTONS:
+        return
+
+    # Reply buttons cancel any pending input.
+    clear_awaiting(context)
+    db: Database = context.application.bot_data["db"]
+    db.ensure_user(update.effective_user.id)
+
+    if text == BTN_NEWS:
+        await send_digest_to_chat(update, context)
+    elif text == BTN_SOURCES:
+        await show_sources_panel(update, context)
+    elif text == BTN_TOPICS:
+        await show_topics_panel(update, context)
+    elif text == BTN_MENU:
+        await show_main_menu(update, context)
+    elif text == BTN_HELP:
+        from bot.handlers import HELP_TEXT
+
+        await update.message.reply_text(HELP_TEXT, reply_markup=main_reply_keyboard())
+    elif text == BTN_RESET:
+        db.reset_last_digest_at(update.effective_user.id)
+        await update.message.reply_text(
+            "Точка прошлого запроса сброшена.",
+            reply_markup=main_reply_keyboard(),
+        )
+
+
+async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user or not update.message.text:
+        return
+    text = update.message.text.strip()
+    if text in REPLY_BUTTONS:
+        return
+    if text.startswith("/"):
+        return
+
+    awaiting = get_awaiting(context)
+    if not awaiting:
+        return
+
+    db: Database = context.application.bot_data["db"]
+    user_id = update.effective_user.id
+    kind = awaiting.get("kind")
+
+    try:
+        if kind == "addlist_channels":
+            from bot.sources_ops import add_telegram_from_text, format_add_report
+
+            folder_title = str(awaiting.get("folder_title") or "")
+            added, skipped = add_telegram_from_text(db, user_id, text)
+            clear_awaiting(context)
+            await update.message.reply_text(
+                format_add_report(
+                    folder_title=folder_title or None,
+                    added=added,
+                    skipped=skipped,
+                ),
+                reply_markup=sources_keyboard(db.list_sources(user_id)),
+            )
+            return
+
+        if kind == "source":
+            source_type = str(awaiting.get("type"))
+            if source_type == "telegram":
+                from bot.addlist import extract_addlist_slug, parse_telegram_handles
+                from bot.handlers import begin_addlist_import
+                from bot.sources_ops import (
+                    add_telegram_from_text,
+                    format_add_report,
+                )
+
+                if extract_addlist_slug(text) and "addlist" in text.lower():
+                    clear_awaiting(context)
+                    await begin_addlist_import(update, context, text)
+                    return
+
+                handles = parse_telegram_handles(text)
+                if len(handles) > 1:
+                    added, skipped = add_telegram_from_text(db, user_id, text)
+                    clear_awaiting(context)
+                    await update.message.reply_text(
+                        format_add_report(
+                            folder_title=None, added=added, skipped=skipped
+                        ),
+                        reply_markup=sources_keyboard(db.list_sources(user_id)),
+                    )
+                    return
+
+            source = _add_source_from_text(db, user_id, source_type, text)
+            clear_awaiting(context)
+            await update.message.reply_text(
+                f"Добавлен источник #{source.id}: [{source.source_type}] {source.title}\n"
+                f"{source.identifier}",
+                reply_markup=sources_keyboard(db.list_sources(user_id)),
+            )
+            return
+
+        if kind == "topic":
+            topics = parse_topic_args(text.split())
+            added: list[str] = []
+            for topic in topics:
+                try:
+                    db.add_topic(user_id, topic)
+                    added.append(topic)
+                except ValueError:
+                    pass
+            clear_awaiting(context)
+            if not added:
+                await update.message.reply_text(
+                    "Все указанные темы уже были добавлены.",
+                    reply_markup=topics_keyboard(db.list_topic_rows(user_id)),
+                )
+                return
+            await update.message.reply_text(
+                "Добавлены темы: "
+                + ", ".join(added)
+                + "\n\n"
+                + topics_text(db, user_id),
+                reply_markup=topics_keyboard(db.list_topic_rows(user_id)),
+            )
+            return
+    except ValueError as exc:
+        await update.message.reply_text(f"{exc}\nПопробуйте ещё раз или /cancel")
+
+
+def _add_source_from_text(
+    db: Database, user_id: int, source_type: str, raw: str
+):
+    from bot.sources_ops import add_single_source
+
+    # Reuse /add parser with synthetic args.
+    source_type, identifier, title = parse_add_args([source_type, *raw.split()])
+    # For rss/facebook/twitter URLs with spaces broken by split — if raw is a URL, use it whole.
+    if source_type in {"rss", "facebook", "twitter"} and (
+        raw.startswith("http://") or raw.startswith("https://")
+    ):
+        identifier = raw.strip()
+        title = title if title and not title.startswith("http") else identifier[:60]
+    return add_single_source(db, user_id, source_type, identifier, title)
+
+
+async def cancel_awaiting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    clear_awaiting(context)
+    if update.message:
+        await update.message.reply_text(
+            "Отменено.",
+            reply_markup=main_reply_keyboard(),
+        )
+        await show_main_menu(update, context)
