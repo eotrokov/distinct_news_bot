@@ -17,6 +17,9 @@ def setup_logging(level: str) -> None:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
         stream=sys.stdout,
     )
+    # httpx logs full request URLs, which include the bot token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def build_app(settings: Settings) -> Application:
