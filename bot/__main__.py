@@ -8,6 +8,7 @@ from telegram.ext import Application
 from bot.config import Settings
 from bot.db import Database
 from bot.digest import DigestService
+from bot.jobs import schedule_jobs
 from bot.handlers import register_handlers
 
 
@@ -34,6 +35,7 @@ def build_app(settings: Settings) -> Application:
     app.bot_data["digest"] = digest
     app.bot_data["settings"] = settings
     register_handlers(app)
+    schedule_jobs(app)
     return app
 
 

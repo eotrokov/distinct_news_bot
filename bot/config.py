@@ -147,6 +147,10 @@ class Settings:
     free_source_limit: int
     stars_per_extra_source: int
     paid_slot_days: int
+    summary_max_sentences: int
+    weekly_top_limit: int
+    weekly_digest_hour_utc: int
+    weekly_digest_weekday: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -174,4 +178,14 @@ class Settings:
                 1, int(_env("STARS_PER_EXTRA_SOURCE", "10") or "10")
             ),
             paid_slot_days=max(1, int(_env("PAID_SLOT_DAYS", "30") or "30")),
+            summary_max_sentences=max(
+                2, int(_env("SUMMARY_MAX_SENTENCES", "3") or "3")
+            ),
+            weekly_top_limit=max(1, int(_env("WEEKLY_TOP_LIMIT", "10") or "10")),
+            weekly_digest_hour_utc=max(
+                0, min(23, int(_env("WEEKLY_DIGEST_HOUR_UTC", "9") or "9"))
+            ),
+            weekly_digest_weekday=max(
+                0, min(6, int(_env("WEEKLY_DIGEST_WEEKDAY", "0") or "0"))
+            ),
         )

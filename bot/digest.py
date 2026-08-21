@@ -72,11 +72,20 @@ def _format_item_links(item: NewsItem) -> str:
     return " " + ", ".join(parts)
 
 
-def _format_digest_item(idx: int, item: NewsItem) -> str:
+def _format_digest_item(idx: int, item: NewsItem, *, show_engagement: bool = False) -> str:
     from html import escape
 
     essence = escape((item.summary or item.title or "").strip() or "Без заголовка")
-    return f"{idx}. <b>{essence}</b>{_format_item_links(item)}"
+    line = f"{idx}. <b>{essence}</b>{_format_item_links(item)}"
+    if show_engagement:
+        bits: list[str] = []
+        if item.reactions:
+            bits.append(f"❤️ {item.reactions}")
+        if item.views:
+            bits.append(f"👁 {item.views}")
+        if bits:
+            line += f"\n<i>{' · '.join(bits)}</i>"
+    return line
 
 
 class DigestService:
@@ -97,9 +106,17 @@ class DigestService:
         self,
         user_id: int,
         days: int | None = None,
+        *,
+        mode: str = "digest",
     ) -> tuple[list[NewsItem], list[str], dict[str, list[str]], int, dict[str, Any]]:
-        """Return (items, errors, topic_filters, days_used, analysis)."""
-        days_used = clamp_digest_days(days, self.settings.default_digest_days)
+        """Return (items, errors, topic_filters, days_used, analysis).
+
+        mode:
+          - digest: normal categorized digest
+          - weekly: top posts by reactions over ``days`` (default 7)
+        """
+        default_days = 7 if mode == "weekly" else self.settings.default_digest_days
+        days_used = clamp_digest_days(days, default_days)
         empty_analysis: dict[str, Any] = {
             "categories": {},
             "stats": {
@@ -108,6 +125,7 @@ class DigestService:
                 "deduped_merged": 0,
                 "final_count": 0,
                 "period_days": days_used,
+                "sort_by": "reactions" if mode == "weekly" else "importance",
             },
         }
         sources = self.db.list_sources(user_id)
@@ -128,9 +146,14 @@ class DigestService:
         )
         sources = active
         since = datetime.now(timezone.utc) - timedelta(days=days_used)
+        # Public preview shows ~20 posts/page; weekly digests paginate deeper.
+        max_pages = 5 if mode == "weekly" or days_used >= 5 else 2
 
         results = await asyncio.gather(
-            *[self._safe_fetch(source) for source in sources],
+            *[
+                self._safe_fetch(source, since=since, max_pages=max_pages)
+                for source in sources
+            ],
             return_exceptions=False,
         )
 
@@ -138,7 +161,7 @@ class DigestService:
         errors: list[str] = []
         if paused:
             errors.append(
-                f"На паузе из‑за лимита слотов: {len(paused)} ист. "
+                f"На паузе из‑за лимита слотов: {len(paused)} канал(ов). "
                 f"(бесплатно {self.settings.free_source_limit}, "
                 f"далее {self.settings.stars_per_extra_source}⭐/канал/мес.)"
             )
@@ -164,13 +187,23 @@ class DigestService:
             )
         ]
 
-        analysis = self.analyzer.process(filtered, period=days_used)
+        sort_by = "reactions" if mode == "weekly" else "importance"
+        analysis = self.analyzer.process(
+            filtered,
+            period=days_used,
+            sort_by=sort_by,
+            max_sentences=self.settings.summary_max_sentences,
+        )
         flat: list[NewsItem] = []
         for cat_items in analysis["categories"].values():
             flat.extend(cat_items)
 
-        limited = flat[: self.settings.digest_limit]
-        # Keep categories aligned with the truncated list.
+        limit = (
+            self.settings.weekly_top_limit
+            if mode == "weekly"
+            else self.settings.digest_limit
+        )
+        limited = flat[:limit]
         if len(flat) > len(limited):
             keep = set(id(x) for x in limited)
             analysis = {
@@ -187,12 +220,23 @@ class DigestService:
             }
         return limited, errors, topic_meta, days_used, analysis
 
-    async def _safe_fetch(self, source: Source) -> tuple[list[NewsItem], str | None]:
+    async def _safe_fetch(
+        self,
+        source: Source,
+        *,
+        since: datetime | None = None,
+        max_pages: int = 1,
+    ) -> tuple[list[NewsItem], str | None]:
         fetcher = self.fetchers.get(source.source_type)
         if fetcher is None:
             return [], f"неизвестный тип {source.source_type}"
         try:
-            items = await fetcher.fetch(source)
+            if source.source_type == "telegram":
+                items = await fetcher.fetch(  # type: ignore[call-arg]
+                    source, since=since, max_pages=max_pages
+                )
+            else:
+                items = await fetcher.fetch(source)
             return items, None
         except (FetchError, ValueError) as exc:
             logger.warning("Fetch failed for source %s: %s", source.id, exc)
@@ -263,6 +307,7 @@ def format_digest_result(
     days_used = int(period) if period else 3
     stats = result.get("stats") or {}
     categories = result.get("categories") or {}
+    show_engagement = (stats.get("sort_by") == "reactions")
 
     # Flatten preserving category order: list of (category, item).
     flat: list[tuple[str, NewsItem]] = []
@@ -279,12 +324,18 @@ def format_digest_result(
                 f"по фильтру ({note})."
             )
         if errors:
-            text += "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
+            text += "\n\nПроблемы с каналами:\n" + "\n".join(f"• {e}" for e in errors)
         return [text]
 
-    header = (
-        f"📰 Дайджест новостей SEO за последние {days_used} {_days_word(days_used)}"
-    )
+    if show_engagement:
+        header = (
+            f"🔥 Главные новости SEO за {days_used} {_days_word(days_used)} "
+            f"(по реакциям)"
+        )
+    else:
+        header = (
+            f"📰 Дайджест новостей SEO за последние {days_used} {_days_word(days_used)}"
+        )
     note = _topic_filter_note(topics)
     if note:
         header += f"\nФильтр тем: {note}"
@@ -317,7 +368,12 @@ def format_digest_result(
             if cat_name != last_cat:
                 parts.append(f"\n\n{cat_name}")
                 last_cat = cat_name
-            parts.append("\n" + _format_digest_item(global_idx, item))
+            parts.append(
+                "\n"
+                + _format_digest_item(
+                    global_idx, item, show_engagement=show_engagement
+                )
+            )
             global_idx += 1
 
         is_last = start + page_size >= total_items

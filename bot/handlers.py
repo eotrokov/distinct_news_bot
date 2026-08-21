@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from telegram import Update
 from telegram.constants import ParseMode
@@ -23,10 +24,10 @@ from bot.billing import (
     parse_pending_source,
     send_slot_invoice,
 )
+from bot.channels import add_channels_bulk, format_bulk_add_result, parse_channel_list
 from bot.config import Settings
 from bot.db import Database
-from bot.digest import parse_add_args, parse_days_arg
-from bot.fetchers.telegram import normalize_telegram_handle
+from bot.digest import parse_days_arg
 from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
 from bot.menu import (
     _sources_markup,
@@ -39,6 +40,7 @@ from bot.menu import (
     show_main_menu,
     show_sources_panel,
     show_topics_panel,
+    sources_text,
     topics_text,
 )
 from bot.topics import parse_topic_args
@@ -49,8 +51,8 @@ HELP_TEXT = """\
 Distinct News — SEO-дайджест из ваших Telegram-каналов.
 
 Бот собирает посты за выбранный период, убирает рекламу и дубли,
-раскладывает по темам и отдаёт одну выжимку. Если пунктов больше 10 —
-листайте стрелками ◀ ▶ в том же сообщении.
+делает подробную выжимку (несколько предложений на новость) и
+отдаёт одну ленту. Если пунктов больше 10 — листайте ◀ ▶.
 
 Лимиты:
 • до 20 каналов бесплатно
@@ -58,24 +60,24 @@ Distinct News — SEO-дайджест из ваших Telegram-каналов.
 
 Команды:
 /news [дни] — выжимка (по умолчанию 3 дня, макс. 30)
-/add @channel — добавить публичный канал
+/weekly — главные за 7 дней по реакциям
+/weekly on|off — авто-рассылка топа раз в неделю
+/add @a @b @c — добавить каналы пачкой
 /sources — список каналов
 /remove <id> — удалить канал
 
 Фильтры тем:
-/topic + seo — ✅ показывать только такие
-/topic - крипта — 🚫 скрывать такие
-/topic del seo — убрать тему
+/topic + seo — ✅ показывать
+/topic - крипта — 🚫 скрывать
 /topics — оба списка
-/topic clear — сбросить фильтры
 
-/menu — меню · /cancel — отмена ввода · /help — справка
+/menu — меню · /cancel — отмена · /help — справка
 
 Примеры:
-/add @searchengines
+/add @searchengines @seonews
 /topic + алгоритм
-/topic - розыгрыш
 /news 5
+/weekly
 """
 
 
@@ -86,7 +88,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         await update.message.reply_text(
             "Привет! Соберу SEO-выжимку из ваших Telegram-каналов: "
-            "дубли и рекламу уберу, темы можно фильтровать ✅/🚫.\n"
+            "можно добавлять каналы пачкой, выжимка подробная, "
+            "раз в неделю — топ по реакциям.\n"
             "Нажмите «Выжимка» или /news — справка: /help",
             reply_markup=main_reply_keyboard(),
         )
@@ -114,29 +117,57 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     db: Database = context.application.bot_data["db"]
     settings: Settings = context.application.bot_data["settings"]
     user_id = update.effective_user.id
+    text = update.message.text or ""
+    # Prefer full message body so multi-line pastes work (/add @a\n@b).
+    match = re.match(r"(?is)^\s*/add(?:@\w+)?(?:\s+|$)(.*)$", text, re.DOTALL)
+    raw = (match.group(1) if match else " ".join(context.args or [])).strip()
     try:
-        source_type, identifier, title = parse_add_args(context.args or [])
-        identifier = normalize_telegram_handle(identifier)
-        ensure_can_add_source(db, settings, user_id)
-        source = db.add_source(user_id, source_type, identifier, title)
-    except SourceLimitError as exc:
-        await update.message.reply_text(str(exc))
-        await send_slot_invoice(
-            update,
-            context,
-            pending_source=dump_pending_source(source_type, identifier, title),
-        )
-        return
+        handles = parse_channel_list(raw)
+        result = add_channels_bulk(db, settings, user_id, handles)
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
 
     await update.message.reply_text(
-        f"Добавлен канал #{source.id}: {source.title}\n"
-        f"`{source.identifier}`",
-        parse_mode=ParseMode.MARKDOWN,
+        format_bulk_add_result(result),
         reply_markup=main_reply_keyboard(),
     )
+    blocked = list(result.get("blocked_by_limit") or [])
+    if blocked:
+        await send_slot_invoice(
+            update,
+            context,
+            pending_source=dump_pending_source(
+                "telegram", blocked[0], f"@{blocked[0]}"
+            ),
+        )
+
+
+async def weekly_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    db: Database = context.application.bot_data["db"]
+    user_id = update.effective_user.id
+    args = list(context.args or [])
+    if args:
+        action = args[0].lower()
+        if action in {"on", "1", "enable", "вкл"}:
+            db.set_weekly_digest_enabled(user_id, True)
+            await update.message.reply_text(
+                "Авто-топ недели включён (раз в 7 дней по реакциям)."
+            )
+            return
+        if action in {"off", "0", "disable", "выкл"}:
+            db.set_weekly_digest_enabled(user_id, False)
+            await update.message.reply_text("Авто-топ недели выключен.")
+            return
+        if action in {"status", "статус"}:
+            enabled = db.is_weekly_digest_enabled(user_id)
+            await update.message.reply_text(
+                "Авто-топ недели: " + ("включён" if enabled else "выключен")
+            )
+            return
+    await send_digest_to_chat(update, context, days=7, mode="weekly")
 
 
 async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -391,6 +422,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("filters", topics_cmd))
     app.add_handler(CommandHandler("news", news))
     app.add_handler(CommandHandler("digest", news))
+    app.add_handler(CommandHandler("weekly", weekly_cmd))
     app.add_handler(CommandHandler("reset", reset_cursor))
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
     app.add_handler(

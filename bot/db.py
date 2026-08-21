@@ -49,7 +49,8 @@ class Database:
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
                     created_at TEXT NOT NULL,
-                    last_digest_at TEXT
+                    last_digest_at TEXT,
+                    weekly_digest_enabled INTEGER NOT NULL DEFAULT 1
                 );
 
                 CREATE TABLE IF NOT EXISTS sources (
@@ -104,6 +105,7 @@ class Database:
                 """
             )
             self._migrate_topics_kind(conn)
+            self._migrate_users_weekly(conn)
 
     def _migrate_topics_kind(self, conn: sqlite3.Connection) -> None:
         cols = {
@@ -115,13 +117,24 @@ class Database:
                 "ALTER TABLE topics ADD COLUMN kind TEXT NOT NULL DEFAULT 'include'"
             )
 
+    def _migrate_users_weekly(self, conn: sqlite3.Connection) -> None:
+        cols = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "weekly_digest_enabled" not in cols:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN weekly_digest_enabled "
+                "INTEGER NOT NULL DEFAULT 1"
+            )
+
     def ensure_user(self, user_id: int) -> None:
         now = _utc_now().isoformat()
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO users(user_id, created_at)
-                VALUES (?, ?)
+                INSERT INTO users(user_id, created_at, weekly_digest_enabled)
+                VALUES (?, ?, 1)
                 ON CONFLICT(user_id) DO NOTHING
                 """,
                 (user_id, now),
@@ -152,6 +165,37 @@ class Database:
                 "UPDATE users SET last_digest_at = NULL WHERE user_id = ?",
                 (user_id,),
             )
+
+    def set_weekly_digest_enabled(self, user_id: int, enabled: bool) -> None:
+        self.ensure_user(user_id)
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE users SET weekly_digest_enabled = ? WHERE user_id = ?",
+                (1 if enabled else 0, user_id),
+            )
+
+    def is_weekly_digest_enabled(self, user_id: int) -> bool:
+        self.ensure_user(user_id)
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT weekly_digest_enabled FROM users WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        if not row:
+            return True
+        return bool(row["weekly_digest_enabled"])
+
+    def list_weekly_digest_users(self) -> list[int]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id FROM users
+                WHERE weekly_digest_enabled = 1
+                  AND user_id IN (SELECT DISTINCT user_id FROM sources)
+                ORDER BY user_id
+                """
+            ).fetchall()
+        return [int(row["user_id"]) for row in rows]
 
     def add_source(
         self,

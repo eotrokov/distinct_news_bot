@@ -28,3 +28,5 @@ class NewsItem:
     summary: str | None = None
     external_id: str = ""
     urls: list[str] = field(default_factory=list)
+    reactions: int = 0
+    views: int = 0

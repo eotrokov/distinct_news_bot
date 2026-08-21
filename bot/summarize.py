@@ -342,11 +342,11 @@ def _sumy_summary(text: str, max_sentences: int = 1) -> str | None:
 def clean_and_summarize(
     text: str,
     *,
-    max_len: int = 220,
-    max_sentences: int = 1,
+    max_len: int = 700,
+    max_sentences: int = 3,
     title: str | None = None,
 ) -> str:
-    """Build a short factual summary: essence, not intro fluff."""
+    """Build a factual summary of up to ``max_sentences`` sentences."""
     cleaned = clean_text(text or "")
     title_clean = clean_text(title) if title else ""
 
@@ -362,28 +362,41 @@ def clean_and_summarize(
     if not sentences:
         sentences = [cleaned]
 
-    # Try rewriting lead-in intros into factual statements.
-    rewritten_candidates: list[str] = []
-    for sentence in sentences:
-        rewritten = _rewrite_lead_in(sentence)
-        if rewritten:
-            rewritten_candidates.append(rewritten)
-
     scored: list[tuple[int, str]] = []
-    for sentence in rewritten_candidates + sentences:
-        candidate = _rewrite_lead_in(sentence) or sentence
-        candidate = _compress(candidate)
+    seen_norm: set[str] = set()
+    for sentence in sentences:
+        candidate = _compress(_rewrite_lead_in(sentence) or sentence)
+        norm = candidate.lower()
+        if not candidate or norm in seen_norm:
+            continue
+        seen_norm.add(norm)
         scored.append((_score_sentence(candidate), candidate))
 
+    if not scored:
+        return _clip(_enrich_with_title(_compress(cleaned), title_clean), max_len)
+
     scored.sort(key=lambda pair: pair[0], reverse=True)
-    chosen = scored[0][1] if scored else cleaned
+    if scored[0][0] < 0 and title_clean and _has_news_hint(title_clean):
+        return _clip(title_clean, max_len)
 
-    # If best score is still bad, fall back to title when it is factual.
-    if scored and scored[0][0] < 0 and title_clean and _has_news_hint(title_clean):
-        chosen = title_clean
+    keep_n = max(1, int(max_sentences))
+    usable = [pair for pair in scored if pair[0] >= 0]
+    if not usable:
+        usable = scored[:1]
+    top = {text for _, text in usable[:keep_n]}
+    ordered: list[str] = []
+    for sentence in sentences:
+        candidate = _compress(_rewrite_lead_in(sentence) or sentence)
+        if candidate in top and candidate not in ordered:
+            ordered.append(candidate)
+        if len(ordered) >= keep_n:
+            break
+    if not ordered:
+        ordered = [usable[0][1]]
 
+    chosen = " ".join(ordered)
     if len(cleaned) > 450:
-        sumy_text = _sumy_summary(cleaned, max_sentences=max_sentences)
+        sumy_text = _sumy_summary(cleaned, max_sentences=keep_n)
         if sumy_text:
             sumy_clean = clean_text(sumy_text)
             if sumy_clean and _score_sentence(sumy_clean) >= _score_sentence(chosen):

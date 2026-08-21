@@ -25,6 +25,19 @@ def test_short_text_cleaned():
     assert clean_and_summarize("Короткий факт без мусора") == "Короткий факт без мусора"
 
 
+def test_multi_sentence_summary():
+    text = (
+        "Google объявил spam update алгоритма ранжирования для вебмастеров. "
+        "Компания заявила, что изменения затронут сайты с манипулятивным контентом. "
+        "Вебмастерам рекомендуют проверить Search Console в ближайшие дни."
+    )
+    out = clean_and_summarize(text, max_sentences=3, max_len=700)
+    # Expect more than a single short clip: at least two sentence endings or length.
+    assert out.count(".") + out.count("!") + out.count("?") >= 2
+    assert len(out) > 80
+    assert "spam" in out.lower() or "алгоритм" in out.lower()
+
+
 def test_first_meaningful_line_skips_greeting():
     text = "Всем привет!\nGoogle представил обновление Search Console."
     assert "представил" in first_meaningful_line(text).lower()

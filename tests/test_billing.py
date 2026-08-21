@@ -19,6 +19,10 @@ def _settings(**overrides) -> Settings:
         free_source_limit=2,
         stars_per_extra_source=10,
         paid_slot_days=30,
+        summary_max_sentences=3,
+        weekly_top_limit=10,
+        weekly_digest_hour_utc=9,
+        weekly_digest_weekday=0,
     )
     base.update(overrides)
     return Settings(**base)

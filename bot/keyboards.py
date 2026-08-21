@@ -31,6 +31,7 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("Выжимка постов", callback_data="m:news")],
+            [InlineKeyboardButton("🔥 Топ недели", callback_data="m:weekly")],
             [
                 InlineKeyboardButton("Каналы", callback_data="m:sources"),
                 InlineKeyboardButton("Темы", callback_data="m:topics"),
@@ -132,5 +133,10 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
 
 
 SOURCE_PROMPTS = {
-    "telegram": "Пришлите публичный Telegram-канал: @channel или https://t.me/channel",
+    "telegram": (
+        "Пришлите публичные Telegram-каналы — можно сразу несколько:\n"
+        "@channel1 @channel2\n"
+        "или каждый с новой строки / через запятую.\n"
+        "Пример: @searchengines, @seonews"
+    ),
 }

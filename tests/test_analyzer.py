@@ -71,6 +71,44 @@ def test_categorize_and_summary_and_process():
     assert all(it.summary for it in flat)
 
 
+def test_sort_by_reactions_orders_weekly_top():
+    analyzer = NewsAnalyzer()
+    low = NewsItem(
+        title="A",
+        url="https://a.example/1",
+        published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        source_type="rss",
+        source_name="test",
+        summary="Google подтвердил spam update алгоритма ранжирования.",
+        reactions=1,
+    )
+    mid = NewsItem(
+        title="B",
+        url="https://a.example/2",
+        published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        source_type="rss",
+        source_name="test",
+        summary="Компания объявил изменения алгоритма ранжирования в поиске.",
+        reactions=10,
+        views=1000,
+    )
+    high = NewsItem(
+        title="C",
+        url="https://a.example/3",
+        published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        source_type="rss",
+        source_name="test",
+        summary="Официально подтвердил spam update для вебмастеров.",
+        reactions=50,
+    )
+    result = analyzer.process(
+        [low, mid, high], period=7, sort_by="reactions", max_sentences=3
+    )
+    assert result["stats"]["sort_by"] == "reactions"
+    ranked = result["categories"]["🔥 Главное за неделю"]
+    assert [it.title for it in ranked] == ["C", "B", "A"]
+
+
 def test_extract_summary_skips_stop_phrase_sentences():
     analyzer = NewsAnalyzer()
     item = _item(

@@ -219,7 +219,7 @@ class NewsAnalyzer:
 
         return {k: v for k, v in buckets.items() if v}
 
-    def extract_summary(self, item: NewsItem) -> str:
+    def extract_summary(self, item: NewsItem, *, max_sentences: int = 3) -> str:
         text = f"{item.summary or ''}".strip() or (item.title or "")
         text = unicodedata.normalize("NFKC", text)
         text = _HASHTAG_RE.sub(" ", text)
@@ -236,31 +236,35 @@ class NewsAnalyzer:
             if len(s.strip()) >= 20
         ]
         if not sentences:
-            return text[:200]
+            return text[:600]
 
         important = {w.lower() for w in IMPORTANT_KEYWORDS}
         for keywords in KEYWORD_CATEGORIES.values():
             important.update(k.lower() for k in keywords)
 
-        best_sentence = sentences[0]
-        best_score = float("-inf")
-        for sentence in sentences:
+        scored: list[tuple[float, int, str]] = []
+        for idx, sentence in enumerate(sentences):
             lower = sentence.lower()
             if any(phrase in lower for phrase in _STOP_PHRASES):
                 continue
             if any(word in lower for word in _BLOCK_WORDS):
                 continue
-            # Phrase-aware: "core update", "ai overview", etc.
             hits = sum(1 for kw in important if kw in lower)
-            score = hits - 0.1 * (len(sentence) / 20.0)
-            if score > best_score:
-                best_score = score
-                best_sentence = sentence
+            score = hits - 0.05 * (len(sentence) / 20.0)
+            scored.append((score, idx, sentence))
 
-        if len(best_sentence) <= 200:
-            return best_sentence
-        cut = best_sentence[:199].rsplit(" ", 1)[0]
-        return (cut or best_sentence[:199]).rstrip(".,;:") + "…"
+        if not scored:
+            joined = " ".join(sentences[: max(1, max_sentences)])
+            return joined if len(joined) <= 600 else joined[:599].rsplit(" ", 1)[0] + "…"
+
+        scored.sort(key=lambda row: (-row[0], row[1]))
+        keep_n = max(1, int(max_sentences))
+        chosen = sorted(scored[:keep_n], key=lambda row: row[1])
+        summary = " ".join(sentence for _, _, sentence in chosen)
+        if len(summary) <= 600:
+            return summary
+        cut = summary[:599].rsplit(" ", 1)[0]
+        return (cut or summary[:599]).rstrip(".,;:") + "…"
 
     def sort_by_importance(self, items: list[NewsItem]) -> list[NewsItem]:
         def score(item: NewsItem) -> int:
@@ -269,7 +273,24 @@ class NewsAnalyzer:
 
         return sorted(items, key=score, reverse=True)
 
-    def process(self, items: list[NewsItem], period: int | None = None) -> dict[str, Any]:
+    def sort_by_reactions(self, items: list[NewsItem]) -> list[NewsItem]:
+        """Rank by reactions, then views, then keyword importance."""
+
+        def score(item: NewsItem) -> tuple[int, int, int]:
+            blob = f"{item.title or ''} {item.summary or ''}".lower()
+            keywords = sum(1 for kw in IMPORTANT_KEYWORDS if kw.lower() in blob)
+            return (int(item.reactions or 0), int(item.views or 0), keywords)
+
+        return sorted(items, key=score, reverse=True)
+
+    def process(
+        self,
+        items: list[NewsItem],
+        period: int | None = None,
+        *,
+        sort_by: str = "importance",
+        max_sentences: int = 3,
+    ) -> dict[str, Any]:
         total = len(items)
         cleaned = self.filter_noise(items)
         filtered_out = total - len(cleaned)
@@ -279,30 +300,38 @@ class NewsAnalyzer:
 
         with_summaries: list[NewsItem] = []
         for item in deduped:
-            summary = self.extract_summary(item)
+            summary = self.extract_summary(item, max_sentences=max_sentences)
             with_summaries.append(
                 replace(item, summary=summary or item.summary, urls=item_urls(item))
             )
 
-        categories = self.categorize(with_summaries)
-        sorted_categories = {
-            name: self.sort_by_importance(cat_items)
-            for name, cat_items in categories.items()
-        }
-        final_count = sum(len(v) for v in sorted_categories.values())
+        if sort_by == "reactions":
+            # Flat ranking for weekly top — keep category labels for formatting.
+            ranked = self.sort_by_reactions(with_summaries)
+            categories = {"🔥 Главное за неделю": ranked}
+        else:
+            categories = self.categorize(with_summaries)
+            categories = {
+                name: self.sort_by_importance(cat_items)
+                for name, cat_items in categories.items()
+            }
+
+        final_count = sum(len(v) for v in categories.values())
         stats = {
             "total_processed": total,
             "filtered_out": filtered_out,
             "deduped_merged": deduped_merged,
             "final_count": final_count,
             "period_days": period,
+            "sort_by": sort_by,
         }
         logger.info(
-            "NewsAnalyzer process: total=%s filtered=%s merged=%s final=%s period=%s",
+            "NewsAnalyzer process: total=%s filtered=%s merged=%s final=%s period=%s sort=%s",
             total,
             filtered_out,
             deduped_merged,
             final_count,
             period,
+            sort_by,
         )
-        return {"categories": sorted_categories, "stats": stats}
+        return {"categories": categories, "stats": stats}

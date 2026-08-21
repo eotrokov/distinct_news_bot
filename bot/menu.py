@@ -13,10 +13,10 @@ from bot.billing import (
     send_slot_invoice,
     sources_quota_text,
 )
+from bot.channels import add_channels_bulk, format_bulk_add_result, parse_channel_list
 from bot.config import Settings
 from bot.db import Database
-from bot.digest import DigestService, parse_add_args
-from bot.fetchers.telegram import normalize_telegram_handle
+from bot.digest import DigestService
 from bot.keyboards import (
     BTN_HELP,
     BTN_MENU,
@@ -43,6 +43,8 @@ DIGEST_SESSIONS_KEY = "digest_sessions"
 MENU_TEXT = (
     "SEO-выжимка из ваших Telegram-каналов.\n"
     "По умолчанию — последние 3 дня (/news 5 — за 5).\n"
+    "Топ недели — главные посты по реакциям за 7 дней.\n"
+    "Каналы можно добавлять пачкой: @a @b @c.\n"
     "Больше 10 пунктов — листайте ◀ ▶.\n"
     "Темы: ✅ показывать / 🚫 скрывать."
 )
@@ -103,15 +105,22 @@ async def send_digest_to_chat(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     days: int | None = None,
+    *,
+    mode: str = "digest",
 ) -> None:
     if not update.effective_user or not update.effective_message:
         return
     digest: DigestService = context.application.bot_data["digest"]
     user_id = update.effective_user.id
-    status = await update.effective_message.reply_text("Собираю выжимку…")
+    status_text = (
+        "Собираю топ недели по реакциям…"
+        if mode == "weekly"
+        else "Собираю выжимку…"
+    )
+    status = await update.effective_message.reply_text(status_text)
     try:
         items, errors, topics, days_used, analysis = await digest.collect_for_user(
-            user_id, days=days
+            user_id, days=days, mode=mode
         )
     except Exception:  # noqa: BLE001
         logger.exception("Digest failed for user %s", user_id)
@@ -157,7 +166,7 @@ def sources_text(db: Database, settings: Settings, user_id: int) -> str:
         return (
             "Каналов пока нет.\n"
             f"{quota}\n"
-            "Нажмите «Добавить канал» или /add @channel"
+            "Нажмите «Добавить канал» или /add @a @b @c"
         )
     lines = [quota, "", "Ваши каналы (нажмите, чтобы удалить):"]
     active, paused = db.list_active_sources(user_id, settings.free_source_limit)
@@ -295,6 +304,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data == "m:news":
         clear_awaiting(context)
         await send_digest_to_chat(update, context)
+        return
+    if data == "m:weekly":
+        clear_awaiting(context)
+        await send_digest_to_chat(update, context, days=7, mode="weekly")
         return
     if data == "m:sources":
         await show_sources_panel(update, context, edit=True)
@@ -451,22 +464,27 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         if kind == "source":
-            source_type = str(awaiting.get("type"))
             try:
-                ensure_can_add_source(db, settings, user_id)
-                source = _add_source_from_text(db, user_id, source_type, text)
-            except SourceLimitError as exc:
-                pending = _pending_from_text(source_type, text)
-                clear_awaiting(context)
-                await update.message.reply_text(str(exc))
-                await send_slot_invoice(update, context, pending_source=pending)
+                handles = parse_channel_list(text)
+            except ValueError as exc:
+                await update.message.reply_text(f"{exc}\nПопробуйте ещё раз или /cancel")
                 return
+            result = add_channels_bulk(db, settings, user_id, handles)
             clear_awaiting(context)
+            msg = format_bulk_add_result(result)
+            blocked = list(result.get("blocked_by_limit") or [])
             await update.message.reply_text(
-                f"Добавлен канал #{source.id}: {source.title}\n"
-                f"{source.identifier}",
+                msg + "\n\n" + sources_text(db, settings, user_id),
                 reply_markup=_sources_markup(db, settings, user_id),
             )
+            if blocked:
+                await send_slot_invoice(
+                    update,
+                    context,
+                    pending_source=dump_pending_source(
+                        "telegram", blocked[0], f"@{blocked[0]}"
+                    ),
+                )
             return
 
         if kind == "topic":
@@ -499,41 +517,6 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
     except ValueError as exc:
         await update.message.reply_text(f"{exc}\nПопробуйте ещё раз или /cancel")
-
-
-def _normalize_source_args(
-    source_type: str, identifier: str, title: str, raw: str | None = None
-) -> tuple[str, str, str]:
-    if source_type != "telegram":
-        raise ValueError("Пока поддерживаются только публичные Telegram-каналы.")
-    identifier = normalize_telegram_handle(identifier)
-    if not title:
-        title = f"@{identifier.lstrip('@').split('/')[-1]}"
-    return "telegram", identifier, title
-
-
-def _pending_from_text(source_type: str, raw: str) -> dict[str, str]:
-    source_type, identifier, title = parse_add_args(["telegram", *raw.split()])
-    source_type, identifier, title = _normalize_source_args(
-        source_type, identifier, title, raw=raw
-    )
-    return dump_pending_source(source_type, identifier, title)
-
-
-def _add_source_from_text(
-    db: Database, user_id: int, source_type: str, raw: str
-):
-    # Accept bare @channel from the prompt.
-    parts = raw.split()
-    if parts and parts[0].lower() not in {"telegram", "tg", "channel"}:
-        args = ["telegram", *parts]
-    else:
-        args = parts
-    source_type, identifier, title = parse_add_args(args)
-    source_type, identifier, title = _normalize_source_args(
-        source_type, identifier, title, raw=raw
-    )
-    return db.add_source(user_id, source_type, identifier, title)
 
 
 async def cancel_awaiting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
