@@ -4,16 +4,14 @@ import logging
 import math
 import re
 import unicodedata
+import warnings
 from collections import Counter
 from dataclasses import replace
 from typing import Any
 
-from fuzzywuzzy import fuzz
-
-# Silence missing python-Levenshtein warning on small VPS installs.
-import warnings
-
 warnings.filterwarnings("ignore", message="Using slow pure-python SequenceMatcher")
+
+from fuzzywuzzy import fuzz
 
 from bot.config import (
     IMPORTANT_KEYWORDS,
