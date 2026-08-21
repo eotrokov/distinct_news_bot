@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from bot.fetchers.base import BaseFetcher, FetchError
 from bot.models import NewsItem, Source
+from bot.summarize import clean_and_summarize, first_meaningful_line
 
 _HANDLE_RE = re.compile(r"^(?:https?://)?(?:t\.me|telegram\.me)/(?:s/)?@?([A-Za-z0-9_]{4,})$")
 
@@ -70,7 +71,7 @@ class TelegramChannelFetcher(BaseFetcher):
                 # Media-only posts: use caption fallback or skip.
                 continue
 
-            title = text.split("\n", 1)[0][:240]
+            title = first_meaningful_line(text, max_len=240) or text.split("\n", 1)[0][:240]
             published_at = None
             time_node = widget.select_one("time")
             if time_node and time_node.get("datetime"):
@@ -88,7 +89,7 @@ class TelegramChannelFetcher(BaseFetcher):
                     published_at=published_at,
                     source_type="telegram",
                     source_name=source.title or f"@{handle}",
-                    summary=text[:900],
+                    summary=clean_and_summarize(text, title=title) or None,
                     external_id=data_post or post_url or title,
                 )
             )

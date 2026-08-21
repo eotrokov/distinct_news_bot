@@ -9,6 +9,7 @@ import httpx
 
 from bot.fetchers.base import BaseFetcher, FetchError
 from bot.models import NewsItem, Source, SourceType
+from bot.summarize import clean_and_summarize, strip_html
 
 
 def parse_feed_datetime(value: Any) -> datetime | None:
@@ -72,11 +73,15 @@ class RssFetcher(BaseFetcher):
                 or getattr(entry, "description", None)
                 or ""
             )
+            content_values = getattr(entry, "content", None) or []
+            if not summary and content_values:
+                summary = content_values[0].get("value", "") if isinstance(content_values[0], dict) else str(content_values[0])
             published = (
                 parse_feed_datetime(getattr(entry, "published", None))
                 or parse_feed_datetime(getattr(entry, "updated", None))
             )
             external_id = str(getattr(entry, "id", None) or link or title)
+            raw_summary = strip_html(str(summary))
             items.append(
                 NewsItem(
                     title=title or link,
@@ -84,16 +89,8 @@ class RssFetcher(BaseFetcher):
                     published_at=published,
                     source_type=source_type,
                     source_name=source_name,
-                    summary=_strip_html(str(summary))[:500],
+                    summary=clean_and_summarize(raw_summary, title=title) or None,
                     external_id=external_id,
                 )
             )
         return items
-
-
-def _strip_html(text: str) -> str:
-    # Lightweight strip without pulling BeautifulSoup for every feed entry path.
-    import re
-
-    cleaned = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"\s+", " ", cleaned).strip()
