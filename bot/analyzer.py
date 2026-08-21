@@ -243,8 +243,8 @@ class NewsAnalyzer:
             lower = sentence.lower()
             if any(phrase in lower for phrase in STOP_PHRASES):
                 continue
-            words = _WORD_RE.findall(lower)
-            hits = sum(1 for w in words if w in important)
+            # Phrase-aware: "core update", "ai overview", etc.
+            hits = sum(1 for kw in important if kw in lower)
             score = hits - 0.1 * (len(sentence) / 20.0)
             if score > best_score:
                 best_score = score

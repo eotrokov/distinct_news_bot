@@ -5,11 +5,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from bot.analyzer import NewsAnalyzer
+from bot.analyzer import NewsAnalyzer, item_urls
 from bot.config import Settings
 from bot.db import Database
 from bot.dedupe import fingerprint_for
-from bot.excerpt import format_item_block
 from bot.fetchers import (
     FacebookFetcher,
     FetchError,
@@ -40,7 +39,44 @@ def parse_days_arg(args: list[str] | None) -> int | None:
     raw = args[0].strip().lower().rstrip("dд")
     if not raw.isdigit():
         raise ValueError("Формат: /news [дни], например /news 5 (1–30)")
-    return int(raw)
+    days = int(raw)
+    if days < MIN_DIGEST_DAYS or days > MAX_DIGEST_DAYS:
+        raise ValueError(f"Число дней должно быть от {MIN_DIGEST_DAYS} до {MAX_DIGEST_DAYS}")
+    return days
+
+
+def _days_word(days: int) -> str:
+    n = abs(int(days)) % 100
+    n1 = n % 10
+    if 11 <= n <= 14:
+        return "дней"
+    if n1 == 1:
+        return "день"
+    if 2 <= n1 <= 4:
+        return "дня"
+    return "дней"
+
+
+def _format_item_links(item: NewsItem) -> str:
+    from html import escape
+
+    urls = item_urls(item)
+    if not urls:
+        return ""
+    if len(urls) == 1:
+        return f' <a href="{escape(urls[0], quote=True)}">источник</a>'
+    parts = [
+        f'<a href="{escape(url, quote=True)}">канал{idx}</a>'
+        for idx, url in enumerate(urls, start=1)
+    ]
+    return " " + ", ".join(parts)
+
+
+def _format_digest_item(idx: int, item: NewsItem) -> str:
+    from html import escape
+
+    essence = escape((item.summary or item.title or "").strip() or "Без заголовка")
+    return f"{idx}. <b>{essence}</b>{_format_item_links(item)}"
 
 
 class DigestService:
@@ -166,56 +202,46 @@ def format_digest(
     days: int | None = None,
     analysis: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Build a categorized «портянка» of analyzed post excerpts."""
+    """Build categorized SEO digest text (HTML for Telegram)."""
     topics = topics or []
-    topic_note = ""
-    if topics:
-        topic_note = "Фильтр тем: " + ", ".join(topics) + "\n"
-    days_note = f"Период: последние {days} дн.\n" if days else ""
-
+    days_used = days or 3
     stats = (analysis or {}).get("stats") or {}
-    stats_note = ""
-    if stats:
-        stats_note = (
-            f"Обработано: {stats.get('total_processed', 0)}, "
-            f"шум: −{stats.get('filtered_out', 0)}, "
-            f"слияний: {stats.get('deduped_merged', 0)}\n"
-        )
+    categories = (analysis or {}).get("categories") or {}
 
-    chunks: list[str] = []
     if not items:
-        text = "За выбранный период новых постов нет."
-        if days:
-            text = f"За последние {days} дн. новых постов нет."
+        text = f"За последние {days_used} {_days_word(days_used)} новых постов нет."
         if topics:
-            text = f"За период нет постов по темам ({', '.join(topics)})."
+            text = (
+                f"За последние {days_used} {_days_word(days_used)} нет постов "
+                f"по темам ({', '.join(topics)})."
+            )
         if errors:
             text += "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
         return [text]
 
     header = (
-        f"Выжимка: {len(items)} постов из ваших источников\n"
-        f"{days_note}"
-        f"{stats_note}"
-        f"(дубли и рекламный шум убраны)\n"
-        f"{topic_note}"
-        f"Листайте ленту — по ссылке можно открыть оригинал.\n"
+        f"📰 Дайджест новостей SEO за последние {days_used} {_days_word(days_used)}"
     )
-    lines = [header]
+    if topics:
+        header += f"\nФильтр тем: {', '.join(topics)}"
 
-    categories = (analysis or {}).get("categories") or {}
+    lines: list[str] = [header]
+    chunks: list[str] = []
+    global_idx = 1
+
     if categories:
-        global_idx = 1
         for cat_name, cat_items in categories.items():
-            block_cat = f"\n<b>📁 {cat_name}</b>\n"
+            if not cat_items:
+                continue
+            block_cat = f"\n\n{cat_name}"
             candidate = "".join(lines) + block_cat
             if len(candidate) > 3700:
                 chunks.append("".join(lines).rstrip())
-                lines = [f"<i>продолжение</i>\n{block_cat}"]
+                lines = [f"<i>продолжение</i>{block_cat}"]
             else:
                 lines.append(block_cat)
             for item in cat_items:
-                block = "\n" + format_item_block(global_idx, item)
+                block = "\n" + _format_digest_item(global_idx, item)
                 global_idx += 1
                 candidate = "".join(lines) + block
                 if len(candidate) > 3700:
@@ -224,14 +250,23 @@ def format_digest(
                 else:
                     lines.append(block)
     else:
-        for idx, item in enumerate(items, start=1):
-            block = "\n" + format_item_block(idx, item)
+        for item in items:
+            block = "\n" + _format_digest_item(global_idx, item)
+            global_idx += 1
             candidate = "".join(lines) + block
             if len(candidate) > 3700:
                 chunks.append("".join(lines).rstrip())
                 lines = [f"<i>продолжение</i>\n{block}"]
             else:
                 lines.append(block)
+
+    stats_line = (
+        f"\n\n📊 Обработано постов: {stats.get('total_processed', len(items))}, "
+        f"в дайджест вошло: {stats.get('final_count', len(items))}, "
+        f"отсеяно как реклама/оффтоп: {stats.get('filtered_out', 0)}, "
+        f"объединено дублей: {stats.get('deduped_merged', 0)}."
+    )
+    lines.append(stats_line)
 
     body = "".join(lines).rstrip()
     if errors:

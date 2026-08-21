@@ -71,7 +71,7 @@ def test_parse_add_args():
 
 def test_format_digest_empty():
     chunks = format_digest([], ["timeout"], days=3)
-    assert "3 дн" in chunks[0]
+    assert "3 дня" in chunks[0]
     assert "timeout" in chunks[0]
 
 
@@ -89,14 +89,26 @@ def test_format_digest_excerpt_and_link():
             summary="Длинный текст поста про событие и детали для читателя ленты.",
         )
     ]
-    chunks = format_digest(items, [], days=3)
-    assert "Выжимка" in chunks[0]
-    assert "Период: последние 3 дн." in chunks[0]
-    assert "открыть пост" in chunks[0]
-    assert "https://example.com/post/1" in chunks[0]
-    assert "📌" in chunks[0]
-    assert "📝" in chunks[0]
-    assert "Длинный текст" in chunks[0]
+    analysis = {
+        "categories": {"🔄 Апдейты алгоритмов": items},
+        "stats": {
+            "total_processed": 10,
+            "final_count": 1,
+            "filtered_out": 8,
+            "deduped_merged": 1,
+        },
+    }
+    chunks = format_digest(items, [], days=3, analysis=analysis)
+    text = chunks[0]
+    assert "Дайджест новостей SEO за последние 3 дня" in text
+    assert "🔄 Апдейты алгоритмов" in text
+    assert "<b>" in text
+    assert "источник" in text
+    assert "https://example.com/post/1" in text
+    assert "Обработано постов: 10" in text
+    assert "в дайджест вошло: 1" in text
+    assert "отсеяно как реклама/оффтоп: 8" in text
+    assert "объединено дублей: 1" in text
 
 
 def test_build_excerpt_prefers_summary():
@@ -115,3 +127,8 @@ def test_parse_days_arg():
     assert clamp_digest_days(None, 3) == 3
     assert clamp_digest_days(0, 3) == 1
     assert clamp_digest_days(99, 3) == 30
+    try:
+        parse_days_arg(["99"])
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
