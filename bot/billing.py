@@ -35,7 +35,7 @@ class SourceLimitError(Exception):
         self.stars = stars
         self.paid_slots = paid_slots
         super().__init__(
-            f"Лимит источников: {current}/{limit}. "
+            f"Лимит каналов: {current}/{limit}. "
             f"Бесплатно {free_limit}, далее {stars}⭐ за канал / месяц."
         )
 
@@ -59,8 +59,8 @@ def sources_quota_text(db: Database, settings: Settings, user_id: int) -> str:
     paid = db.count_active_paid_slots(user_id)
     limit = settings.free_source_limit + paid
     lines = [
-        f"Слоты: {current}/{limit} "
-        f"(бесплатно {settings.free_source_limit}, оплаченных: {paid}).",
+        f"Каналы: {current}/{limit} "
+        f"(бесплатно {settings.free_source_limit}, оплаченных слотов: {paid}).",
         f"Сверх лимита — {settings.stars_per_extra_source}⭐ за канал на "
         f"{settings.paid_slot_days} дн.",
     ]
@@ -99,7 +99,7 @@ async def send_slot_invoice(
 
     title = "Доп. канал на месяц"
     description = (
-        f"Слот источника сверх бесплатных {settings.free_source_limit} "
+        f"Слот Telegram-канала сверх бесплатных {settings.free_source_limit} "
         f"на {days} дней. После оплаты можно добавить ещё один канал."
     )
     prices = [LabeledPrice(label=f"Слот на {days} дн.", amount=stars)]
@@ -125,7 +125,7 @@ def parse_pending_source(raw: dict[str, Any] | None) -> tuple[SourceType, str, s
         title = str(raw.get("title") or identifier[:60])
     except (KeyError, TypeError, ValueError):
         return None
-    if source_type not in {"telegram", "rss", "ria", "facebook", "twitter"}:
+    if source_type not in {"telegram"}:
         return None
     return source_type, identifier, title  # type: ignore[return-value]
 

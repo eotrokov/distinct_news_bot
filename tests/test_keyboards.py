@@ -25,14 +25,15 @@ def test_sources_and_topics_keyboards():
     source = Source(
         id=3,
         user_id=1,
-        source_type="ria",
-        identifier="main",
-        title="РИА",
+        source_type="telegram",
+        identifier="meduzalive",
+        title="@meduzalive",
         created_at=datetime.now(timezone.utc),
     )
     sk = sources_keyboard([source])
     assert any("m:src_del:3" == b.callback_data for r in sk.inline_keyboard for b in r)
     assert any(b.callback_data == "m:src_add" for r in sk.inline_keyboard for b in r)
+    assert any("Добавить канал" == b.text for r in sk.inline_keyboard for b in r)
 
     sk_paid = sources_keyboard([source], show_buy_slot=True, stars=10)
     assert any(b.callback_data == "m:buy_slot" for r in sk_paid.inline_keyboard for b in r)
@@ -44,6 +45,7 @@ def test_sources_and_topics_keyboards():
 
     types = source_type_keyboard()
     assert any(b.callback_data == "m:src_type:telegram" for r in types.inline_keyboard for b in r)
+    assert not any("rss" in (b.callback_data or "") for r in types.inline_keyboard for b in r)
 
 
 def test_digest_page_keyboard():

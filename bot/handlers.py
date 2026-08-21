@@ -26,7 +26,6 @@ from bot.billing import (
 from bot.config import Settings
 from bot.db import Database
 from bot.digest import parse_add_args, parse_days_arg
-from bot.fetchers.ria import RIA_FEEDS
 from bot.fetchers.telegram import normalize_telegram_handle
 from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
 from bot.menu import (
@@ -47,22 +46,21 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """\
-Distinct News — SEO-дайджест из ваших Telegram-каналов и RSS.
+Distinct News — SEO-дайджест из ваших Telegram-каналов.
 
 Бот собирает посты за выбранный период, убирает рекламу и дубли,
 раскладывает по темам и отдаёт одну выжимку. Если пунктов больше 10 —
 листайте стрелками ◀ ▶ в том же сообщении.
 
 Лимиты:
-• до 20 источников бесплатно
+• до 20 каналов бесплатно
 • дальше — 10⭐ за канал на 30 дней
 
 Команды:
 /news [дни] — выжимка (по умолчанию 3 дня, макс. 30)
-/add telegram @channel — добавить канал
-/add rss <url> — добавить RSS
-/sources — список источников
-/remove <id> — удалить источник
+/add @channel — добавить публичный канал
+/sources — список каналов
+/remove <id> — удалить канал
 
 Фильтры тем:
 /topic + seo — ✅ показывать только такие
@@ -74,7 +72,7 @@ Distinct News — SEO-дайджест из ваших Telegram-каналов �
 /menu — меню · /cancel — отмена ввода · /help — справка
 
 Примеры:
-/add telegram searchengines
+/add @searchengines
 /topic + алгоритм
 /topic - розыгрыш
 /news 5
@@ -87,7 +85,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         db.ensure_user(update.effective_user.id)
     if update.message:
         await update.message.reply_text(
-            "Привет! Соберу SEO-выжимку из ваших каналов и RSS: "
+            "Привет! Соберу SEO-выжимку из ваших Telegram-каналов: "
             "дубли и рекламу уберу, темы можно фильтровать ✅/🚫.\n"
             "Нажмите «Выжимка» или /news — справка: /help",
             reply_markup=main_reply_keyboard(),
@@ -118,16 +116,7 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     user_id = update.effective_user.id
     try:
         source_type, identifier, title = parse_add_args(context.args or [])
-        if source_type == "telegram":
-            identifier = normalize_telegram_handle(identifier)
-        if source_type == "ria" and not (
-            identifier.startswith("http://") or identifier.startswith("https://")
-        ):
-            key = identifier.lower()
-            if key not in RIA_FEEDS:
-                known = ", ".join(sorted(RIA_FEEDS))
-                raise ValueError(f"Лента РИА: {known} или полный URL RSS")
-            identifier = key
+        identifier = normalize_telegram_handle(identifier)
         ensure_can_add_source(db, settings, user_id)
         source = db.add_source(user_id, source_type, identifier, title)
     except SourceLimitError as exc:
@@ -143,7 +132,7 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     await update.message.reply_text(
-        f"Добавлен источник #{source.id}: [{source.source_type}] {source.title}\n"
+        f"Добавлен канал #{source.id}: {source.title}\n"
         f"`{source.identifier}`",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_reply_keyboard(),
@@ -205,21 +194,20 @@ async def successful_payment_handler(
             ensure_can_add_source(db, settings, user_id)
             source = db.add_source(user_id, source_type, identifier, title)
             await update.message.reply_text(
-                f"{note}\nДобавлен источник #{source.id}: "
-                f"[{source.source_type}] {source.title}",
+                f"{note}\nДобавлен канал #{source.id}: {source.title}",
                 reply_markup=_sources_markup(db, settings, user_id),
             )
             return
         except (SourceLimitError, ValueError) as exc:
             await update.message.reply_text(
-                f"{note}\nНе удалось сразу добавить источник: {exc}\n"
-                f"Слот уже активен — повторите /add.",
+                f"{note}\nНе удалось сразу добавить канал: {exc}\n"
+                f"Слот уже активен — повторите /add @channel.",
                 reply_markup=_sources_markup(db, settings, user_id),
             )
             return
 
     await update.message.reply_text(
-        note + "\nТеперь можно добавить ещё один источник.",
+        note + "\nТеперь можно добавить ещё один канал.",
         reply_markup=_sources_markup(db, settings, user_id),
     )
 

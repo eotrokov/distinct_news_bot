@@ -6,7 +6,7 @@ from bot.models import Source
 
 # Reply keyboard labels (must match handlers)
 BTN_NEWS = "Выжимка"
-BTN_SOURCES = "Источники"
+BTN_SOURCES = "Каналы"
 BTN_TOPICS = "Темы"
 BTN_MENU = "Меню"
 BTN_HELP = "Помощь"
@@ -32,7 +32,7 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("Выжимка постов", callback_data="m:news")],
             [
-                InlineKeyboardButton("Источники", callback_data="m:sources"),
+                InlineKeyboardButton("Каналы", callback_data="m:sources"),
                 InlineKeyboardButton("Темы", callback_data="m:topics"),
             ],
             [
@@ -51,12 +51,12 @@ def sources_keyboard(
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for source in sources:
-        label = f"Удалить #{source.id} {source.source_type}:{source.title}"[:60]
+        label = f"Удалить #{source.id} {source.title}"[:60]
         rows.append(
             [InlineKeyboardButton(label, callback_data=f"m:src_del:{source.id}")]
         )
     rows.append(
-        [InlineKeyboardButton("Добавить источник", callback_data="m:src_add")]
+        [InlineKeyboardButton("Добавить канал", callback_data="m:src_add")]
     )
     if show_buy_slot:
         rows.append(
@@ -88,17 +88,17 @@ def digest_page_keyboard(page: int, total: int) -> InlineKeyboardMarkup:
 
 
 def source_type_keyboard() -> InlineKeyboardMarkup:
-    types = [
-        ("Telegram", "telegram"),
-        ("RSS", "rss"),
-        ("РИА", "ria"),
-    ]
-    rows = [
-        [InlineKeyboardButton(label, callback_data=f"m:src_type:{stype}")]
-        for label, stype in types
-    ]
-    rows.append([InlineKeyboardButton("« К источникам", callback_data="m:sources")])
-    return InlineKeyboardMarkup(rows)
+    """Kept for compatibility; UI now adds Telegram channels directly."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "Telegram-канал", callback_data="m:src_type:telegram"
+                )
+            ],
+            [InlineKeyboardButton("« К каналам", callback_data="m:sources")],
+        ]
+    )
 
 
 def topics_keyboard(
@@ -132,9 +132,5 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
 
 
 SOURCE_PROMPTS = {
-    "telegram": "Пришлите публичный канал: @channel или https://t.me/channel",
-    "ria": "Пришлите ленту РИА: main / politics / world / … или URL RSS",
-    "rss": "Пришлите URL RSS/Atom ленты",
-    "facebook": "Пришлите имя страницы Facebook, URL страницы или URL RSS",
-    "twitter": "Пришлите @user, URL профиля X/Twitter или URL RSS",
+    "telegram": "Пришлите публичный Telegram-канал: @channel или https://t.me/channel",
 }

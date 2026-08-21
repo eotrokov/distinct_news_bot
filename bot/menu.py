@@ -16,7 +16,6 @@ from bot.billing import (
 from bot.config import Settings
 from bot.db import Database
 from bot.digest import DigestService, parse_add_args
-from bot.fetchers.ria import RIA_FEEDS
 from bot.fetchers.telegram import normalize_telegram_handle
 from bot.keyboards import (
     BTN_HELP,
@@ -31,7 +30,6 @@ from bot.keyboards import (
     digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
-    source_type_keyboard,
     sources_keyboard,
     topics_keyboard,
 )
@@ -43,7 +41,7 @@ AWAITING_KEY = "awaiting"
 DIGEST_SESSIONS_KEY = "digest_sessions"
 
 MENU_TEXT = (
-    "SEO-выжимка из ваших каналов и RSS.\n"
+    "SEO-выжимка из ваших Telegram-каналов.\n"
     "По умолчанию — последние 3 дня (/news 5 — за 5).\n"
     "Больше 10 пунктов — листайте ◀ ▶.\n"
     "Темы: ✅ показывать / 🚫 скрывать."
@@ -157,16 +155,16 @@ def sources_text(db: Database, settings: Settings, user_id: int) -> str:
     quota = sources_quota_text(db, settings, user_id)
     if not sources:
         return (
-            "Источников пока нет.\n"
+            "Каналов пока нет.\n"
             f"{quota}\n"
-            "Нажмите «Добавить источник» или используйте /add"
+            "Нажмите «Добавить канал» или /add @channel"
         )
-    lines = [quota, "", "Ваши источники (нажмите, чтобы удалить):"]
+    lines = [quota, "", "Ваши каналы (нажмите, чтобы удалить):"]
     active, paused = db.list_active_sources(user_id, settings.free_source_limit)
     active_ids = {s.id for s in active}
     for s in sources:
         mark = "" if s.id in active_ids else " ⏸"
-        lines.append(f"#{s.id} [{s.source_type}] {s.title}{mark}\n  {s.identifier}")
+        lines.append(f"#{s.id} {s.title}{mark}\n  {s.identifier}")
     if paused:
         lines.append("\n⏸ — на паузе, пока нет оплаченного слота.")
     return "\n".join(lines)
@@ -334,18 +332,17 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
             await send_slot_invoice(update, context)
             return
+        set_awaiting(context, {"kind": "source", "type": "telegram"})
+        prompt = SOURCE_PROMPTS["telegram"]
         await query.edit_message_text(
-            "Выберите тип источника:",
-            reply_markup=source_type_keyboard(),
+            f"{prompt}\n\nИли /cancel чтобы отменить.",
+            reply_markup=back_home_keyboard(),
         )
         return
     if data.startswith("m:src_type:"):
-        source_type = data.split(":", 2)[2]
-        if source_type not in SOURCE_PROMPTS:
-            await query.answer("Неизвестный тип", show_alert=True)
-            return
-        set_awaiting(context, {"kind": "source", "type": source_type})
-        prompt = SOURCE_PROMPTS[source_type]
+        # Legacy callbacks → always Telegram.
+        set_awaiting(context, {"kind": "source", "type": "telegram"})
+        prompt = SOURCE_PROMPTS["telegram"]
         await query.edit_message_text(
             f"{prompt}\n\nИли /cancel чтобы отменить.",
             reply_markup=back_home_keyboard(),
@@ -354,7 +351,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data.startswith("m:src_del:"):
         source_id = int(data.split(":")[2])
         ok = db.remove_source(user_id, source_id)
-        note = f"Источник #{source_id} удалён.\n\n" if ok else "Источник не найден.\n\n"
+        note = f"Канал #{source_id} удалён.\n\n" if ok else "Канал не найден.\n\n"
         text = note + sources_text(db, settings, user_id)
         await query.edit_message_text(
             text, reply_markup=_sources_markup(db, settings, user_id)
@@ -466,7 +463,7 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 return
             clear_awaiting(context)
             await update.message.reply_text(
-                f"Добавлен источник #{source.id}: [{source.source_type}] {source.title}\n"
+                f"Добавлен канал #{source.id}: {source.title}\n"
                 f"{source.identifier}",
                 reply_markup=_sources_markup(db, settings, user_id),
             )
@@ -507,26 +504,16 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 def _normalize_source_args(
     source_type: str, identifier: str, title: str, raw: str | None = None
 ) -> tuple[str, str, str]:
-    if source_type == "telegram":
-        identifier = normalize_telegram_handle(identifier)
-    if source_type == "ria" and not (
-        identifier.startswith("http://") or identifier.startswith("https://")
-    ):
-        key = identifier.lower()
-        if key not in RIA_FEEDS:
-            known = ", ".join(sorted(RIA_FEEDS))
-            raise ValueError(f"Лента РИА: {known} или полный URL RSS")
-        identifier = key
-    if raw and source_type in {"rss", "facebook", "twitter"} and (
-        raw.startswith("http://") or raw.startswith("https://")
-    ):
-        identifier = raw.strip()
-        title = title if title and not title.startswith("http") else identifier[:60]
-    return source_type, identifier, title
+    if source_type != "telegram":
+        raise ValueError("Пока поддерживаются только публичные Telegram-каналы.")
+    identifier = normalize_telegram_handle(identifier)
+    if not title:
+        title = f"@{identifier.lstrip('@').split('/')[-1]}"
+    return "telegram", identifier, title
 
 
 def _pending_from_text(source_type: str, raw: str) -> dict[str, str]:
-    source_type, identifier, title = parse_add_args([source_type, *raw.split()])
+    source_type, identifier, title = parse_add_args(["telegram", *raw.split()])
     source_type, identifier, title = _normalize_source_args(
         source_type, identifier, title, raw=raw
     )
@@ -536,7 +523,13 @@ def _pending_from_text(source_type: str, raw: str) -> dict[str, str]:
 def _add_source_from_text(
     db: Database, user_id: int, source_type: str, raw: str
 ):
-    source_type, identifier, title = parse_add_args([source_type, *raw.split()])
+    # Accept bare @channel from the prompt.
+    parts = raw.split()
+    if parts and parts[0].lower() not in {"telegram", "tg", "channel"}:
+        args = ["telegram", *parts]
+    else:
+        args = parts
+    source_type, identifier, title = parse_add_args(args)
     source_type, identifier, title = _normalize_source_args(
         source_type, identifier, title, raw=raw
     )

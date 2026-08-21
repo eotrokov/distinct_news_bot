@@ -68,6 +68,17 @@ def test_parse_add_args():
     assert ident == "bbcnews"
     assert title.startswith("@")
 
+    t2, ident2, title2 = parse_add_args(["@meduzalive"])
+    assert t2 == "telegram"
+    assert ident2 == "@meduzalive"
+    assert title2.startswith("@")
+
+    try:
+        parse_add_args(["rss", "https://example.com/feed.xml"])
+        assert False, "expected ValueError for non-telegram"
+    except ValueError as exc:
+        assert "Telegram" in str(exc)
+
 
 def test_format_digest_empty():
     chunks = format_digest([], ["timeout"], days=3)

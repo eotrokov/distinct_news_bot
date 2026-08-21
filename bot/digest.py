@@ -117,7 +117,7 @@ class DigestService:
         if not sources:
             return (
                 [],
-                ["Нет источников. Добавьте через /add"],
+                ["Нет каналов. Добавьте через /add @channel"],
                 topic_meta,
                 days_used,
                 empty_analysis,
@@ -358,40 +358,45 @@ def format_digest(
 
 
 def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
-    """Parse /add arguments into (type, identifier, title)."""
-    if len(args) < 2:
-        raise ValueError(
-            "Формат: /add <telegram|rss|ria|facebook|twitter> <id_или_url> [название]"
-        )
-    raw_type = args[0].lower().strip()
-    aliases = {
-        "tg": "telegram",
-        "channel": "telegram",
-        "fb": "facebook",
-        "x": "twitter",
-        "tw": "twitter",
-        "twitter/x": "twitter",
-    }
-    source_type = aliases.get(raw_type, raw_type)
-    if source_type not in {"telegram", "rss", "ria", "facebook", "twitter"}:
-        raise ValueError(
-            "Тип источника: telegram, rss, ria, facebook, twitter"
-        )
-    identifier = args[1].strip()
-    title = " ".join(args[2:]).strip() if len(args) > 2 else ""
+    """Parse /add arguments. Currently Telegram channels only."""
+    if not args:
+        raise ValueError("Формат: /add @channel  или  /add telegram @channel")
+
+    first = args[0].lower().strip()
+    aliases = {"tg": "telegram", "channel": "telegram"}
+
+    # /add @channel  or  /add channelname
+    if first not in {"telegram", "tg", "channel"} and first not in {
+        "rss",
+        "ria",
+        "facebook",
+        "twitter",
+        "fb",
+        "x",
+        "tw",
+    }:
+        source_type: SourceType = "telegram"
+        identifier = args[0].strip()
+        title = " ".join(args[1:]).strip()
+    else:
+        source_type = aliases.get(first, first)  # type: ignore[assignment]
+        if source_type != "telegram":
+            raise ValueError(
+                "Пока поддерживаются только публичные Telegram-каналы.\n"
+                "Формат: /add @channel"
+            )
+        if len(args) < 2:
+            raise ValueError("Формат: /add @channel  или  /add telegram @channel")
+        identifier = args[1].strip()
+        title = " ".join(args[2:]).strip()
+
     if not title:
-        title = _default_title(source_type, identifier)  # type: ignore[arg-type]
-    return source_type, identifier, title  # type: ignore[return-value]
+        title = _default_title("telegram", identifier)
+    return "telegram", identifier, title
 
 
 def _default_title(source_type: SourceType, identifier: str) -> str:
     if source_type == "telegram":
         handle = identifier.lstrip("@").split("/")[-1]
         return f"@{handle}"
-    if source_type == "ria":
-        return f"РИА ({identifier})"
-    if source_type == "twitter":
-        return f"@{identifier.lstrip('@')}"
-    if source_type == "facebook":
-        return f"FB:{identifier}"
     return identifier[:60]
