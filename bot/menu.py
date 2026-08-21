@@ -6,6 +6,14 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
+from bot.billing import (
+    SourceLimitError,
+    dump_pending_source,
+    ensure_can_add_source,
+    send_slot_invoice,
+    sources_quota_text,
+)
+from bot.config import Settings
 from bot.db import Database
 from bot.digest import DigestService, parse_add_args
 from bot.fetchers.ria import RIA_FEEDS
@@ -20,6 +28,7 @@ from bot.keyboards import (
     REPLY_BUTTONS,
     SOURCE_PROMPTS,
     back_home_keyboard,
+    digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
     source_type_keyboard,
@@ -31,10 +40,12 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 AWAITING_KEY = "awaiting"
+DIGEST_SESSIONS_KEY = "digest_sessions"
 
 MENU_TEXT = (
     "Выжимка постов за последние дни — одна лента вместо обхода каналов.\n"
     "По умолчанию 3 дня; команда /news 5 — за 5 дней.\n"
+    "Если новостей больше 10 — листайте стрелками.\n"
     "Снизу — быстрые кнопки, здесь — подробное меню."
 )
 
@@ -50,6 +61,24 @@ def set_awaiting(context: ContextTypes.DEFAULT_TYPE, payload: dict) -> None:
 def get_awaiting(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
     value = context.user_data.get(AWAITING_KEY)
     return value if isinstance(value, dict) else None
+
+
+def _store_digest_pages(
+    context: ContextTypes.DEFAULT_TYPE, user_id: int, pages: list[str]
+) -> None:
+    sessions = context.application.bot_data.setdefault(DIGEST_SESSIONS_KEY, {})
+    sessions[user_id] = {"pages": pages, "page": 0}
+
+
+def _get_digest_pages(
+    context: ContextTypes.DEFAULT_TYPE, user_id: int
+) -> list[str] | None:
+    sessions = context.application.bot_data.get(DIGEST_SESSIONS_KEY) or {}
+    session = sessions.get(user_id)
+    if not isinstance(session, dict):
+        return None
+    pages = session.get("pages")
+    return pages if isinstance(pages, list) and pages else None
 
 
 async def show_main_menu(
@@ -91,39 +120,55 @@ async def send_digest_to_chat(
         await status.edit_text("Не удалось собрать выжимку. Попробуйте позже.")
         return
 
-    chunks = digest.format_digest(
+    pages = digest.format_digest(
         analysis,
         days_used,
         errors=errors,
         topics=topics,
     )
-    await status.edit_text(
-        chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True
-    )
-    for chunk in chunks[1:]:
-        await update.effective_message.reply_text(
-            chunk,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
+    _store_digest_pages(context, user_id, pages)
     digest.mark_digest_delivered(user_id, items)
-    await update.effective_message.reply_text(
-        "Готово. Листайте выжимку выше — по ссылке открывается оригинал.\n"
-        f"Период: {days_used} дн. (можно /news 5).",
-        reply_markup=back_home_keyboard(),
+
+    markup = (
+        digest_page_keyboard(0, len(pages))
+        if len(pages) > 1
+        else back_home_keyboard()
+    )
+    await status.edit_text(
+        pages[0],
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+        reply_markup=markup,
     )
 
 
-def sources_text(db: Database, user_id: int) -> str:
+def _sources_markup(db: Database, settings: Settings, user_id: int):
+    current = db.count_sources(user_id)
+    limit = db.source_limit(user_id, settings.free_source_limit)
+    return sources_keyboard(
+        db.list_sources(user_id),
+        show_buy_slot=current >= limit,
+        stars=settings.stars_per_extra_source,
+    )
+
+
+def sources_text(db: Database, settings: Settings, user_id: int) -> str:
     sources = db.list_sources(user_id)
+    quota = sources_quota_text(db, settings, user_id)
     if not sources:
         return (
             "Источников пока нет.\n"
+            f"{quota}\n"
             "Нажмите «Добавить источник» или используйте /add"
         )
-    lines = ["Ваши источники (нажмите, чтобы удалить):"]
+    lines = [quota, "", "Ваши источники (нажмите, чтобы удалить):"]
+    active, paused = db.list_active_sources(user_id, settings.free_source_limit)
+    active_ids = {s.id for s in active}
     for s in sources:
-        lines.append(f"#{s.id} [{s.source_type}] {s.title}\n  {s.identifier}")
+        mark = "" if s.id in active_ids else " ⏸"
+        lines.append(f"#{s.id} [{s.source_type}] {s.title}{mark}\n  {s.identifier}")
+    if paused:
+        lines.append("\n⏸ — на паузе, пока нет оплаченного слота.")
     return "\n".join(lines)
 
 
@@ -150,9 +195,10 @@ async def show_sources_panel(
     if not update.effective_user:
         return
     db: Database = context.application.bot_data["db"]
+    settings: Settings = context.application.bot_data["settings"]
     user_id = update.effective_user.id
-    text = sources_text(db, user_id)
-    markup = sources_keyboard(db.list_sources(user_id))
+    text = sources_text(db, settings, user_id)
+    markup = _sources_markup(db, settings, user_id)
     if edit and update.callback_query and update.callback_query.message:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
     elif update.effective_message:
@@ -182,11 +228,45 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     query = update.callback_query
     if not query or not update.effective_user:
         return
-    await query.answer()
     data = query.data or ""
     db: Database = context.application.bot_data["db"]
+    settings: Settings = context.application.bot_data["settings"]
     user_id = update.effective_user.id
     db.ensure_user(user_id)
+
+    if data == "m:dg:noop":
+        await query.answer()
+        return
+
+    if data.startswith("m:dg:"):
+        await query.answer()
+        try:
+            page = int(data.split(":")[2])
+        except (IndexError, ValueError):
+            return
+        pages = _get_digest_pages(context, user_id)
+        if not pages:
+            await query.answer(
+                "Выжимка устарела — нажмите «Выжимка» ещё раз.",
+                show_alert=True,
+            )
+            return
+        page = max(0, min(page, len(pages) - 1))
+        sessions = context.application.bot_data.get(DIGEST_SESSIONS_KEY) or {}
+        if user_id in sessions:
+            sessions[user_id]["page"] = page
+        try:
+            await query.edit_message_text(
+                pages[page],
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+                reply_markup=digest_page_keyboard(page, len(pages)),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to paginate digest for user %s", user_id)
+        return
+
+    await query.answer()
 
     if data == "m:home":
         await show_main_menu(update, context, edit=True)
@@ -215,8 +295,21 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             reply_markup=back_home_keyboard(),
         )
         return
+    if data == "m:buy_slot":
+        clear_awaiting(context)
+        await send_slot_invoice(update, context)
+        return
     if data == "m:src_add":
         clear_awaiting(context)
+        try:
+            ensure_can_add_source(db, settings, user_id)
+        except SourceLimitError as exc:
+            await query.edit_message_text(
+                f"{exc}\n\nОплатите слот Stars, затем добавьте канал.",
+                reply_markup=_sources_markup(db, settings, user_id),
+            )
+            await send_slot_invoice(update, context)
+            return
         await query.edit_message_text(
             "Выберите тип источника:",
             reply_markup=source_type_keyboard(),
@@ -238,9 +331,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         source_id = int(data.split(":")[2])
         ok = db.remove_source(user_id, source_id)
         note = f"Источник #{source_id} удалён.\n\n" if ok else "Источник не найден.\n\n"
-        text = note + sources_text(db, user_id)
+        text = note + sources_text(db, settings, user_id)
         await query.edit_message_text(
-            text, reply_markup=sources_keyboard(db.list_sources(user_id))
+            text, reply_markup=_sources_markup(db, settings, user_id)
         )
         return
     if data == "m:topic_add":
@@ -280,7 +373,6 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if text not in REPLY_BUTTONS:
         return
 
-    # Reply buttons cancel any pending input.
     clear_awaiting(context)
     db: Database = context.application.bot_data["db"]
     db.ensure_user(update.effective_user.id)
@@ -319,18 +411,27 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     db: Database = context.application.bot_data["db"]
+    settings: Settings = context.application.bot_data["settings"]
     user_id = update.effective_user.id
     kind = awaiting.get("kind")
 
     try:
         if kind == "source":
             source_type = str(awaiting.get("type"))
-            source = _add_source_from_text(db, user_id, source_type, text)
+            try:
+                ensure_can_add_source(db, settings, user_id)
+                source = _add_source_from_text(db, user_id, source_type, text)
+            except SourceLimitError as exc:
+                pending = _pending_from_text(source_type, text)
+                clear_awaiting(context)
+                await update.message.reply_text(str(exc))
+                await send_slot_invoice(update, context, pending_source=pending)
+                return
             clear_awaiting(context)
             await update.message.reply_text(
                 f"Добавлен источник #{source.id}: [{source.source_type}] {source.title}\n"
                 f"{source.identifier}",
-                reply_markup=sources_keyboard(db.list_sources(user_id)),
+                reply_markup=_sources_markup(db, settings, user_id),
             )
             return
 
@@ -362,11 +463,9 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(f"{exc}\nПопробуйте ещё раз или /cancel")
 
 
-def _add_source_from_text(
-    db: Database, user_id: int, source_type: str, raw: str
-):
-    # Reuse /add parser with synthetic args.
-    source_type, identifier, title = parse_add_args([source_type, *raw.split()])
+def _normalize_source_args(
+    source_type: str, identifier: str, title: str, raw: str | None = None
+) -> tuple[str, str, str]:
     if source_type == "telegram":
         identifier = normalize_telegram_handle(identifier)
     if source_type == "ria" and not (
@@ -377,12 +476,29 @@ def _add_source_from_text(
             known = ", ".join(sorted(RIA_FEEDS))
             raise ValueError(f"Лента РИА: {known} или полный URL RSS")
         identifier = key
-    # For rss/facebook/twitter URLs with spaces broken by split — if raw is a URL, use it whole.
-    if source_type in {"rss", "facebook", "twitter"} and (
+    if raw and source_type in {"rss", "facebook", "twitter"} and (
         raw.startswith("http://") or raw.startswith("https://")
     ):
         identifier = raw.strip()
         title = title if title and not title.startswith("http") else identifier[:60]
+    return source_type, identifier, title
+
+
+def _pending_from_text(source_type: str, raw: str) -> dict[str, str]:
+    source_type, identifier, title = parse_add_args([source_type, *raw.split()])
+    source_type, identifier, title = _normalize_source_args(
+        source_type, identifier, title, raw=raw
+    )
+    return dump_pending_source(source_type, identifier, title)
+
+
+def _add_source_from_text(
+    db: Database, user_id: int, source_type: str, raw: str
+):
+    source_type, identifier, title = parse_add_args([source_type, *raw.split()])
+    source_type, identifier, title = _normalize_source_args(
+        source_type, identifier, title, raw=raw
+    )
     return db.add_source(user_id, source_type, identifier, title)
 
 

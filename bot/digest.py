@@ -120,6 +120,10 @@ class DigestService:
                 empty_analysis,
             )
 
+        active, paused = self.db.list_active_sources(
+            user_id, self.settings.free_source_limit
+        )
+        sources = active
         topics = self.db.list_topics(user_id)
         since = datetime.now(timezone.utc) - timedelta(days=days_used)
 
@@ -130,6 +134,12 @@ class DigestService:
 
         items: list[NewsItem] = []
         errors: list[str] = []
+        if paused:
+            errors.append(
+                f"На паузе из‑за лимита слотов: {len(paused)} ист. "
+                f"(бесплатно {self.settings.free_source_limit}, "
+                f"далее {self.settings.stars_per_extra_source}⭐/канал/мес.)"
+            )
         for source, result in zip(sources, results):
             fetched, err = result
             if err:
@@ -202,9 +212,13 @@ class DigestService:
         errors: list[str] | None = None,
         topics: list[str] | None = None,
     ) -> list[str]:
-        """Format analyzer process() result into Telegram HTML chunks."""
+        """Format analyzer process() result into Telegram HTML pages."""
         return format_digest_result(
-            result, period, errors=errors or [], topics=topics or []
+            result,
+            period,
+            errors=errors or [],
+            topics=topics or [],
+            page_size=self.settings.digest_page_size,
         )
 
 
@@ -214,18 +228,22 @@ def format_digest_result(
     *,
     errors: list[str] | None = None,
     topics: list[str] | None = None,
+    page_size: int = 10,
 ) -> list[str]:
-    """Build categorized SEO digest text (HTML for Telegram)."""
+    """Build digest pages: at most ``page_size`` news items per page."""
     errors = errors or []
     topics = topics or []
     days_used = int(period) if period else 3
     stats = result.get("stats") or {}
     categories = result.get("categories") or {}
-    items: list[NewsItem] = [
-        item for cat_items in categories.values() for item in cat_items
-    ]
 
-    if not items:
+    # Flatten preserving category order: list of (category, item).
+    flat: list[tuple[str, NewsItem]] = []
+    for cat_name, cat_items in categories.items():
+        for item in cat_items:
+            flat.append((cat_name, item))
+
+    if not flat:
         text = f"За последние {days_used} {_days_word(days_used)} новых постов нет."
         if topics:
             text = (
@@ -242,50 +260,45 @@ def format_digest_result(
     if topics:
         header += f"\nФильтр тем: {', '.join(topics)}"
 
-    lines: list[str] = [header]
-    chunks: list[str] = []
-    global_idx = 1
-
-    for cat_name, cat_items in categories.items():
-        if not cat_items:
-            continue
-        block_cat = f"\n\n{cat_name}"
-        candidate = "".join(lines) + block_cat
-        if len(candidate) > 3700:
-            chunks.append("".join(lines).rstrip())
-            lines = [f"<i>продолжение</i>{block_cat}"]
-        else:
-            lines.append(block_cat)
-        for item in cat_items:
-            block = "\n" + _format_digest_item(global_idx, item)
-            global_idx += 1
-            candidate = "".join(lines) + block
-            if len(candidate) > 3700:
-                chunks.append("".join(lines).rstrip())
-                lines = [f"<i>продолжение</i>\n{block}"]
-            else:
-                lines.append(block)
-
     stats_line = (
-        f"\n\n📊 Обработано постов: {stats.get('total_processed', len(items))}, "
-        f"в дайджест вошло: {stats.get('final_count', len(items))}, "
+        f"\n\n📊 Обработано постов: {stats.get('total_processed', len(flat))}, "
+        f"в дайджест вошло: {stats.get('final_count', len(flat))}, "
         f"отсеяно как реклама/оффтоп: {stats.get('filtered_out', 0)}, "
         f"объединено дублей: {stats.get('deduped_merged', 0)}."
     )
-    lines.append(stats_line)
-
-    body = "".join(lines).rstrip()
+    err_block = ""
     if errors:
         err_block = "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
-        if len(body) + len(err_block) > 3800:
-            chunks.append(body)
-            chunks.append(err_block.strip())
-        else:
-            body += err_block
-            chunks.append(body)
-    else:
-        chunks.append(body)
-    return chunks
+
+    page_size = max(1, int(page_size))
+    pages: list[str] = []
+    total_items = len(flat)
+    global_idx = 1
+
+    for start in range(0, total_items, page_size):
+        chunk = flat[start : start + page_size]
+        page_no = start // page_size + 1
+        total_pages = (total_items + page_size - 1) // page_size
+        parts: list[str] = [header]
+        if total_pages > 1:
+            parts.append(f"\n<i>Страница {page_no}/{total_pages}</i>")
+
+        last_cat: str | None = None
+        for cat_name, item in chunk:
+            if cat_name != last_cat:
+                parts.append(f"\n\n{cat_name}")
+                last_cat = cat_name
+            parts.append("\n" + _format_digest_item(global_idx, item))
+            global_idx += 1
+
+        is_last = start + page_size >= total_items
+        if is_last:
+            parts.append(stats_line)
+            if err_block:
+                parts.append(err_block)
+        pages.append("".join(parts).rstrip())
+
+    return pages
 
 
 def format_digest(
@@ -294,6 +307,7 @@ def format_digest(
     topics: list[str] | None = None,
     days: int | None = None,
     analysis: dict[str, Any] | None = None,
+    page_size: int = 10,
 ) -> list[str]:
     """Compatibility wrapper used by handlers/tests."""
     analysis = analysis or {
@@ -306,7 +320,11 @@ def format_digest(
         },
     }
     return format_digest_result(
-        analysis, days or 3, errors=errors, topics=topics or []
+        analysis,
+        days or 3,
+        errors=errors,
+        topics=topics or [],
+        page_size=page_size,
     )
 
 

@@ -43,7 +43,12 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
+def sources_keyboard(
+    sources: list[Source],
+    *,
+    show_buy_slot: bool = False,
+    stars: int = 10,
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for source in sources:
         label = f"Удалить #{source.id} {source.source_type}:{source.title}"[:60]
@@ -53,7 +58,32 @@ def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
     rows.append(
         [InlineKeyboardButton("Добавить источник", callback_data="m:src_add")]
     )
+    if show_buy_slot:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"Купить слот ({stars}⭐ / мес.)",
+                    callback_data="m:buy_slot",
+                )
+            ]
+        )
     rows.append([InlineKeyboardButton("« Меню", callback_data="m:home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def digest_page_keyboard(page: int, total: int) -> InlineKeyboardMarkup:
+    """Inline pager for digest pages (0-based page index)."""
+    total = max(1, total)
+    page = max(0, min(page, total - 1))
+    row: list[InlineKeyboardButton] = []
+    if page > 0:
+        row.append(InlineKeyboardButton("◀", callback_data=f"m:dg:{page - 1}"))
+    row.append(
+        InlineKeyboardButton(f"{page + 1}/{total}", callback_data="m:dg:noop")
+    )
+    if page < total - 1:
+        row.append(InlineKeyboardButton("▶", callback_data=f"m:dg:{page + 1}"))
+    rows = [row, [InlineKeyboardButton("« Меню", callback_data="m:home")]]
     return InlineKeyboardMarkup(rows)
 
 

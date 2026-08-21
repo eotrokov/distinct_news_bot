@@ -10,15 +10,27 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    PreCheckoutQueryHandler,
     filters,
 )
 
+from bot.billing import (
+    PAYLOAD_BUY_SLOT,
+    PAYLOAD_BUY_SLOT_ADD,
+    SourceLimitError,
+    dump_pending_source,
+    ensure_can_add_source,
+    parse_pending_source,
+    send_slot_invoice,
+)
+from bot.config import Settings
 from bot.db import Database
 from bot.digest import parse_add_args, parse_days_arg
 from bot.fetchers.ria import RIA_FEEDS
 from bot.fetchers.telegram import normalize_telegram_handle
 from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
 from bot.menu import (
+    _sources_markup,
     cancel_awaiting,
     get_awaiting,
     on_awaiting_text,
@@ -41,6 +53,11 @@ HELP_TEXT = """\
 Кнопки:
 • снизу экрана — быстрые действия
 • /menu — подробное inline-меню
+• если новостей >10 — стрелки ◀ ▶ в сообщении выжимки
+
+Лимиты:
+• до 20 источников бесплатно
+• дальше — 10⭐ Telegram Stars за канал на месяц
 
 Команды:
 /menu — открыть меню
@@ -106,6 +123,7 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not update.message or not update.effective_user:
         return
     db: Database = context.application.bot_data["db"]
+    settings: Settings = context.application.bot_data["settings"]
     user_id = update.effective_user.id
     try:
         source_type, identifier, title = parse_add_args(context.args or [])
@@ -119,7 +137,16 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 known = ", ".join(sorted(RIA_FEEDS))
                 raise ValueError(f"Лента РИА: {known} или полный URL RSS")
             identifier = key
+        ensure_can_add_source(db, settings, user_id)
         source = db.add_source(user_id, source_type, identifier, title)
+    except SourceLimitError as exc:
+        await update.message.reply_text(str(exc))
+        await send_slot_invoice(
+            update,
+            context,
+            pending_source=dump_pending_source(source_type, identifier, title),
+        )
+        return
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
@@ -129,6 +156,80 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"`{source.identifier}`",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_reply_keyboard(),
+    )
+
+
+async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.pre_checkout_query
+    if not query:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    ok = (
+        query.currency == "XTR"
+        and query.total_amount == settings.stars_per_extra_source
+        and query.invoice_payload in {PAYLOAD_BUY_SLOT, PAYLOAD_BUY_SLOT_ADD}
+    )
+    if ok:
+        await query.answer(ok=True)
+    else:
+        await query.answer(ok=False, error_message="Некорректный платёж. Попробуйте снова.")
+
+
+async def successful_payment_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if not update.message or not update.effective_user or not update.message.successful_payment:
+        return
+    payment = update.message.successful_payment
+    db: Database = context.application.bot_data["db"]
+    settings: Settings = context.application.bot_data["settings"]
+    user_id = update.effective_user.id
+
+    if payment.currency != "XTR":
+        await update.message.reply_text("Неожиданная валюта платежа.")
+        return
+    if payment.total_amount != settings.stars_per_extra_source:
+        await update.message.reply_text("Сумма платежа не совпала. Напишите в поддержку.")
+        return
+
+    _, expires = db.add_paid_slot(
+        user_id,
+        stars_paid=payment.total_amount,
+        days=settings.paid_slot_days,
+        telegram_payment_charge_id=payment.telegram_payment_charge_id,
+    )
+
+    note = (
+        f"Оплата прошла: +1 слот на {settings.paid_slot_days} дн. "
+        f"(до {expires.strftime('%d.%m.%Y')})."
+    )
+
+    pending = None
+    if payment.invoice_payload == PAYLOAD_BUY_SLOT_ADD:
+        pending = parse_pending_source(context.user_data.pop("pending_source", None))
+
+    if pending:
+        source_type, identifier, title = pending
+        try:
+            ensure_can_add_source(db, settings, user_id)
+            source = db.add_source(user_id, source_type, identifier, title)
+            await update.message.reply_text(
+                f"{note}\nДобавлен источник #{source.id}: "
+                f"[{source.source_type}] {source.title}",
+                reply_markup=_sources_markup(db, settings, user_id),
+            )
+            return
+        except (SourceLimitError, ValueError) as exc:
+            await update.message.reply_text(
+                f"{note}\nНе удалось сразу добавить источник: {exc}\n"
+                f"Слот уже активен — повторите /add.",
+                reply_markup=_sources_markup(db, settings, user_id),
+            )
+            return
+
+    await update.message.reply_text(
+        note + "\nТеперь можно добавить ещё один источник.",
+        reply_markup=_sources_markup(db, settings, user_id),
     )
 
 
@@ -289,6 +390,10 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("news", news))
     app.add_handler(CommandHandler("digest", news))
     app.add_handler(CommandHandler("reset", reset_cursor))
+    app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
+    app.add_handler(
+        MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler)
+    )
     app.add_handler(CallbackQueryHandler(on_callback, pattern=r"^m:"))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_router)

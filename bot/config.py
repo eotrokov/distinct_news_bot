@@ -89,11 +89,15 @@ class Settings:
     db_path: str
     log_level: str
     digest_limit: int
+    digest_page_size: int
     fetch_timeout_seconds: float
     rsshub_base_url: str | None
     default_digest_days: int
     # Kept for backward compatibility with older .env files.
     default_lookback_hours: int
+    free_source_limit: int
+    stars_per_extra_source: int
+    paid_slot_days: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -111,8 +115,14 @@ class Settings:
             db_path=_env("BOT_DB", "data/bot.sqlite3") or "data/bot.sqlite3",
             log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
             digest_limit=max(1, int(_env("DIGEST_LIMIT", "30") or "30")),
+            digest_page_size=max(1, int(_env("DIGEST_PAGE_SIZE", "10") or "10")),
             fetch_timeout_seconds=float(_env("FETCH_TIMEOUT_SECONDS", "20") or "20"),
             rsshub_base_url=_env("RSSHUB_BASE_URL"),
             default_digest_days=digest_days,
             default_lookback_hours=lookback_hours,
+            free_source_limit=max(1, int(_env("FREE_SOURCE_LIMIT", "20") or "20")),
+            stars_per_extra_source=max(
+                1, int(_env("STARS_PER_EXTRA_SOURCE", "10") or "10")
+            ),
+            paid_slot_days=max(1, int(_env("PAID_SLOT_DAYS", "30") or "30")),
         )

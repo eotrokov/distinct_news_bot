@@ -111,6 +111,35 @@ def test_format_digest_excerpt_and_link():
     assert "объединено дублей: 1" in text
 
 
+def test_format_digest_paginates_by_ten():
+    items = [
+        _item(
+            f"News {i}",
+            f"https://example.com/{i}",
+            "src",
+            summary=f"Summary body for news item number {i} with enough words here.",
+        )
+        for i in range(25)
+    ]
+    analysis = {
+        "categories": {"🔄 Апдейты алгоритмов": items},
+        "stats": {
+            "total_processed": 25,
+            "final_count": 25,
+            "filtered_out": 0,
+            "deduped_merged": 0,
+        },
+    }
+    pages = format_digest(items, [], days=3, analysis=analysis, page_size=10)
+    assert len(pages) == 3
+    assert "Страница 1/3" in pages[0]
+    assert "Страница 2/3" in pages[1]
+    assert "Страница 3/3" in pages[2]
+    assert "Обработано постов: 25" in pages[-1]
+    assert "Обработано постов" not in pages[0]
+    assert pages[0].count("\n1. ") + pages[0].count("\n2. ") >= 1
+
+
 def test_build_excerpt_prefers_summary():
     item = _item(
         "Короткий заголовок",

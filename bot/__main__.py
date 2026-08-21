@@ -42,7 +42,9 @@ def main() -> None:
     setup_logging(settings.log_level)
     app = build_app(settings)
     logging.getLogger(__name__).info("Starting distinct-news-bot")
-    app.run_polling(allowed_updates=["message", "callback_query"])
+    app.run_polling(
+        allowed_updates=["message", "callback_query", "pre_checkout_query"]
+    )
 
 
 if __name__ == "__main__":

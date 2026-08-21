@@ -82,12 +82,24 @@ class Database:
                     FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS paid_slots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    stars_paid INTEGER NOT NULL,
+                    telegram_payment_charge_id TEXT,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_sources_user
                     ON sources(user_id);
                 CREATE INDEX IF NOT EXISTS idx_seen_user_seen_at
                     ON seen_items(user_id, seen_at);
                 CREATE INDEX IF NOT EXISTS idx_topics_user
                     ON topics(user_id);
+                CREATE INDEX IF NOT EXISTS idx_paid_slots_user_expires
+                    ON paid_slots(user_id, expires_at);
                 """
             )
 
@@ -176,6 +188,82 @@ class Database:
                 (user_id,),
             ).fetchall()
         return [self._row_to_source(row) for row in rows]
+
+    def count_sources(self, user_id: int) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM sources WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return int(row["c"] if row else 0)
+
+    def count_active_paid_slots(self, user_id: int) -> int:
+        now = _utc_now().isoformat()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM paid_slots
+                WHERE user_id = ? AND expires_at > ?
+                """,
+                (user_id, now),
+            ).fetchone()
+        return int(row["c"] if row else 0)
+
+    def source_limit(self, user_id: int, free_limit: int) -> int:
+        return max(0, int(free_limit)) + self.count_active_paid_slots(user_id)
+
+    def list_active_sources(
+        self, user_id: int, free_limit: int
+    ) -> tuple[list[Source], list[Source]]:
+        """Return (fetchable, paused_over_limit) sources."""
+        sources = self.list_sources(user_id)
+        limit = self.source_limit(user_id, free_limit)
+        return sources[:limit], sources[limit:]
+
+    def add_paid_slot(
+        self,
+        user_id: int,
+        stars_paid: int,
+        days: int,
+        telegram_payment_charge_id: str | None = None,
+    ) -> tuple[datetime, datetime]:
+        from datetime import timedelta
+
+        self.ensure_user(user_id)
+        created = _utc_now()
+        expires = created + timedelta(days=max(1, int(days)))
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO paid_slots(
+                    user_id, stars_paid, telegram_payment_charge_id,
+                    created_at, expires_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    int(stars_paid),
+                    telegram_payment_charge_id,
+                    created.isoformat(),
+                    expires.isoformat(),
+                ),
+            )
+        return created, expires
+
+    def latest_paid_slot_expiry(self, user_id: int) -> datetime | None:
+        now = _utc_now().isoformat()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT expires_at FROM paid_slots
+                WHERE user_id = ? AND expires_at > ?
+                ORDER BY expires_at DESC
+                LIMIT 1
+                """,
+                (user_id, now),
+            ).fetchone()
+        return _parse_dt(row["expires_at"] if row else None)
 
     def mark_seen(
         self,

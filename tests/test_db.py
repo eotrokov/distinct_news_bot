@@ -33,6 +33,27 @@ def test_db_sources_and_seen(tmp_path):
     assert db.list_sources(user_id) == []
 
 
+def test_paid_slots_and_source_limit(tmp_path):
+    db = Database(str(tmp_path / "slots.sqlite3"))
+    user_id = 99
+    for i in range(3):
+        db.add_source(user_id, "rss", f"https://ex.example/{i}", f"s{i}")
+    assert db.count_sources(user_id) == 3
+    assert db.count_active_paid_slots(user_id) == 0
+    assert db.source_limit(user_id, free_limit=2) == 2
+    active, paused = db.list_active_sources(user_id, free_limit=2)
+    assert len(active) == 2
+    assert len(paused) == 1
+
+    created, expires = db.add_paid_slot(user_id, stars_paid=10, days=30, telegram_payment_charge_id="x")
+    assert expires > created
+    assert db.count_active_paid_slots(user_id) == 1
+    assert db.source_limit(user_id, free_limit=2) == 3
+    active2, paused2 = db.list_active_sources(user_id, free_limit=2)
+    assert len(active2) == 3
+    assert paused2 == []
+
+
 def test_db_topics(tmp_path):
     db = Database(str(tmp_path / "topics.sqlite3"))
     user_id = 7
