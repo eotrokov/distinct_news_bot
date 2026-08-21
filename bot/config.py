@@ -65,7 +65,6 @@ KEYWORD_CATEGORIES: dict[str, list[str]] = {
         "llm",
         "ai",
         "нейросеть",
-        "gpt",
         "gep",
     ],
     "📈 Исследования и кейсы": [

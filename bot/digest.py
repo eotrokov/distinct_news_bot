@@ -194,19 +194,36 @@ class DigestService:
         self.db.set_last_digest_at(user_id, now)
         self.db.cleanup_seen(user_id)
 
+    def format_digest(
+        self,
+        result: dict[str, Any],
+        period: int,
+        *,
+        errors: list[str] | None = None,
+        topics: list[str] | None = None,
+    ) -> list[str]:
+        """Format analyzer process() result into Telegram HTML chunks."""
+        return format_digest_result(
+            result, period, errors=errors or [], topics=topics or []
+        )
 
-def format_digest(
-    items: list[NewsItem],
-    errors: list[str],
+
+def format_digest_result(
+    result: dict[str, Any],
+    period: int,
+    *,
+    errors: list[str] | None = None,
     topics: list[str] | None = None,
-    days: int | None = None,
-    analysis: dict[str, Any] | None = None,
 ) -> list[str]:
     """Build categorized SEO digest text (HTML for Telegram)."""
+    errors = errors or []
     topics = topics or []
-    days_used = days or 3
-    stats = (analysis or {}).get("stats") or {}
-    categories = (analysis or {}).get("categories") or {}
+    days_used = int(period) if period else 3
+    stats = result.get("stats") or {}
+    categories = result.get("categories") or {}
+    items: list[NewsItem] = [
+        item for cat_items in categories.values() for item in cat_items
+    ]
 
     if not items:
         text = f"За последние {days_used} {_days_word(days_used)} новых постов нет."
@@ -229,28 +246,17 @@ def format_digest(
     chunks: list[str] = []
     global_idx = 1
 
-    if categories:
-        for cat_name, cat_items in categories.items():
-            if not cat_items:
-                continue
-            block_cat = f"\n\n{cat_name}"
-            candidate = "".join(lines) + block_cat
-            if len(candidate) > 3700:
-                chunks.append("".join(lines).rstrip())
-                lines = [f"<i>продолжение</i>{block_cat}"]
-            else:
-                lines.append(block_cat)
-            for item in cat_items:
-                block = "\n" + _format_digest_item(global_idx, item)
-                global_idx += 1
-                candidate = "".join(lines) + block
-                if len(candidate) > 3700:
-                    chunks.append("".join(lines).rstrip())
-                    lines = [f"<i>продолжение</i>\n{block}"]
-                else:
-                    lines.append(block)
-    else:
-        for item in items:
+    for cat_name, cat_items in categories.items():
+        if not cat_items:
+            continue
+        block_cat = f"\n\n{cat_name}"
+        candidate = "".join(lines) + block_cat
+        if len(candidate) > 3700:
+            chunks.append("".join(lines).rstrip())
+            lines = [f"<i>продолжение</i>{block_cat}"]
+        else:
+            lines.append(block_cat)
+        for item in cat_items:
             block = "\n" + _format_digest_item(global_idx, item)
             global_idx += 1
             candidate = "".join(lines) + block
@@ -280,6 +286,28 @@ def format_digest(
     else:
         chunks.append(body)
     return chunks
+
+
+def format_digest(
+    items: list[NewsItem],
+    errors: list[str],
+    topics: list[str] | None = None,
+    days: int | None = None,
+    analysis: dict[str, Any] | None = None,
+) -> list[str]:
+    """Compatibility wrapper used by handlers/tests."""
+    analysis = analysis or {
+        "categories": {"📰 Новости": list(items)} if items else {},
+        "stats": {
+            "total_processed": len(items),
+            "final_count": len(items),
+            "filtered_out": 0,
+            "deduped_merged": 0,
+        },
+    }
+    return format_digest_result(
+        analysis, days or 3, errors=errors, topics=topics or []
+    )
 
 
 def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:

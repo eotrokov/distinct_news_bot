@@ -7,7 +7,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from bot.db import Database
-from bot.digest import DigestService, format_digest, parse_add_args
+from bot.digest import DigestService, parse_add_args
 from bot.fetchers.ria import RIA_FEEDS
 from bot.fetchers.telegram import normalize_telegram_handle
 from bot.keyboards import (
@@ -91,8 +91,11 @@ async def send_digest_to_chat(
         await status.edit_text("Не удалось собрать выжимку. Попробуйте позже.")
         return
 
-    chunks = format_digest(
-        items, errors, topics, days=days_used, analysis=analysis
+    chunks = digest.format_digest(
+        analysis,
+        days_used,
+        errors=errors,
+        topics=topics,
     )
     await status.edit_text(
         chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True
