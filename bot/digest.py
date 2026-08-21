@@ -216,14 +216,14 @@ class DigestService:
         period: int,
         *,
         errors: list[str] | None = None,
-        topics: list[str] | None = None,
+        topics: list[str] | dict[str, list[str]] | None = None,
     ) -> list[str]:
         """Format analyzer process() result into Telegram HTML pages."""
         return format_digest_result(
             result,
             period,
             errors=errors or [],
-            topics=topics or [],
+            topics=topics or {},
             page_size=self.settings.digest_page_size,
         )
 
