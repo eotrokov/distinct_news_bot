@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
+from bot.analyzer import NewsAnalyzer
 from bot.config import Settings
 from bot.db import Database
-from bot.dedupe import deduplicate, fingerprint_for
+from bot.dedupe import fingerprint_for
 from bot.excerpt import format_item_block
 from bot.fetchers import (
     FacebookFetcher,
@@ -45,6 +47,7 @@ class DigestService:
     def __init__(self, db: Database, settings: Settings) -> None:
         self.db = db
         self.settings = settings
+        self.analyzer = NewsAnalyzer()
         self.rss = RssFetcher(timeout=settings.fetch_timeout_seconds)
         self.fetchers = {
             "rss": self.rss,
@@ -58,13 +61,19 @@ class DigestService:
         self,
         user_id: int,
         days: int | None = None,
-    ) -> tuple[list[NewsItem], list[str], list[str], int]:
-        """Return (items, errors, active_topics, days_used).
-
-        Period is strictly the last N days (default from settings),
-        not since the previous /news request.
-        """
+    ) -> tuple[list[NewsItem], list[str], list[str], int, dict[str, Any]]:
+        """Return (items, errors, topics, days_used, analysis)."""
         days_used = clamp_digest_days(days, self.settings.default_digest_days)
+        empty_analysis: dict[str, Any] = {
+            "categories": {},
+            "stats": {
+                "total_processed": 0,
+                "filtered_out": 0,
+                "deduped_merged": 0,
+                "final_count": 0,
+                "period_days": days_used,
+            },
+        }
         sources = self.db.list_sources(user_id)
         if not sources:
             return (
@@ -72,6 +81,7 @@ class DigestService:
                 ["Нет источников. Добавьте через /add"],
                 self.db.list_topics(user_id),
                 days_used,
+                empty_analysis,
             )
 
         topics = self.db.list_topics(user_id)
@@ -102,14 +112,28 @@ class DigestService:
                 if item_matches_topics(item.title, item.summary or "", topics)
             ]
 
-        unique = deduplicate(filtered)
+        analysis = self.analyzer.process(filtered, period=days_used)
+        flat: list[NewsItem] = []
+        for cat_items in analysis["categories"].values():
+            flat.extend(cat_items)
 
-        # Newest first, then truncate.
-        unique.sort(
-            key=lambda i: i.published_at or datetime.min.replace(tzinfo=timezone.utc),
-            reverse=True,
-        )
-        return unique[: self.settings.digest_limit], errors, topics, days_used
+        limited = flat[: self.settings.digest_limit]
+        # Keep categories aligned with the truncated list.
+        if len(flat) > len(limited):
+            keep = set(id(x) for x in limited)
+            analysis = {
+                **analysis,
+                "categories": {
+                    name: [it for it in cat if id(it) in keep]
+                    for name, cat in analysis["categories"].items()
+                    if any(id(it) in keep for it in cat)
+                },
+                "stats": {
+                    **analysis["stats"],
+                    "final_count": len(limited),
+                },
+            }
+        return limited, errors, topics, days_used, analysis
 
     async def _safe_fetch(self, source: Source) -> tuple[list[NewsItem], str | None]:
         fetcher = self.fetchers.get(source.source_type)
@@ -126,8 +150,6 @@ class DigestService:
             return [], f"ошибка: {exc}"
 
     def mark_digest_delivered(self, user_id: int, items: list[NewsItem]) -> None:
-        # Keep last_digest_at / seen for compatibility and future features,
-        # but period selection no longer depends on them.
         now = datetime.now(timezone.utc)
         fingerprints = [
             (fingerprint_for(item), item.url, item.title) for item in items
@@ -142,13 +164,23 @@ def format_digest(
     errors: list[str],
     topics: list[str] | None = None,
     days: int | None = None,
+    analysis: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Build a readable «портянка» of post excerpts with links."""
+    """Build a categorized «портянка» of analyzed post excerpts."""
     topics = topics or []
     topic_note = ""
     if topics:
         topic_note = "Фильтр тем: " + ", ".join(topics) + "\n"
     days_note = f"Период: последние {days} дн.\n" if days else ""
+
+    stats = (analysis or {}).get("stats") or {}
+    stats_note = ""
+    if stats:
+        stats_note = (
+            f"Обработано: {stats.get('total_processed', 0)}, "
+            f"шум: −{stats.get('filtered_out', 0)}, "
+            f"слияний: {stats.get('deduped_merged', 0)}\n"
+        )
 
     chunks: list[str] = []
     if not items:
@@ -156,9 +188,7 @@ def format_digest(
         if days:
             text = f"За последние {days} дн. новых постов нет."
         if topics:
-            text = (
-                f"За период нет постов по темам ({', '.join(topics)})."
-            )
+            text = f"За период нет постов по темам ({', '.join(topics)})."
         if errors:
             text += "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
         return [text]
@@ -166,19 +196,42 @@ def format_digest(
     header = (
         f"Выжимка: {len(items)} постов из ваших источников\n"
         f"{days_note}"
-        f"(дубли между каналами убраны)\n"
+        f"{stats_note}"
+        f"(дубли и рекламный шум убраны)\n"
         f"{topic_note}"
         f"Листайте ленту — по ссылке можно открыть оригинал.\n"
     )
     lines = [header]
-    for idx, item in enumerate(items, start=1):
-        block = "\n" + format_item_block(idx, item)
-        candidate = "".join(lines) + block
-        if len(candidate) > 3700:
-            chunks.append("".join(lines).rstrip())
-            lines = [f"<i>продолжение</i>\n{block}"]
-        else:
-            lines.append(block)
+
+    categories = (analysis or {}).get("categories") or {}
+    if categories:
+        global_idx = 1
+        for cat_name, cat_items in categories.items():
+            block_cat = f"\n<b>📁 {cat_name}</b>\n"
+            candidate = "".join(lines) + block_cat
+            if len(candidate) > 3700:
+                chunks.append("".join(lines).rstrip())
+                lines = [f"<i>продолжение</i>\n{block_cat}"]
+            else:
+                lines.append(block_cat)
+            for item in cat_items:
+                block = "\n" + format_item_block(global_idx, item)
+                global_idx += 1
+                candidate = "".join(lines) + block
+                if len(candidate) > 3700:
+                    chunks.append("".join(lines).rstrip())
+                    lines = [f"<i>продолжение</i>\n{block}"]
+                else:
+                    lines.append(block)
+    else:
+        for idx, item in enumerate(items, start=1):
+            block = "\n" + format_item_block(idx, item)
+            candidate = "".join(lines) + block
+            if len(candidate) > 3700:
+                chunks.append("".join(lines).rstrip())
+                lines = [f"<i>продолжение</i>\n{block}"]
+            else:
+                lines.append(block)
 
     body = "".join(lines).rstrip()
     if errors:

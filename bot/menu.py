@@ -83,7 +83,7 @@ async def send_digest_to_chat(
     user_id = update.effective_user.id
     status = await update.effective_message.reply_text("Собираю выжимку…")
     try:
-        items, errors, topics, days_used = await digest.collect_for_user(
+        items, errors, topics, days_used, analysis = await digest.collect_for_user(
             user_id, days=days
         )
     except Exception:  # noqa: BLE001
@@ -91,7 +91,9 @@ async def send_digest_to_chat(
         await status.edit_text("Не удалось собрать выжимку. Попробуйте позже.")
         return
 
-    chunks = format_digest(items, errors, topics, days=days_used)
+    chunks = format_digest(
+        items, errors, topics, days=days_used, analysis=analysis
+    )
     await status.edit_text(
         chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True
     )

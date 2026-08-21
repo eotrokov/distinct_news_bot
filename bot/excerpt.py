@@ -4,6 +4,7 @@ import re
 from html import escape
 
 from bot.models import NewsItem
+from bot.analyzer import item_urls
 
 _SPACE_RE = re.compile(r"\s+")
 SUMMARY_LEN = 200
@@ -39,7 +40,6 @@ def format_item_block(idx: int, item: NewsItem) -> str:
     summary_raw = (item.summary or "").strip()
     summary_line = ""
     if summary_raw:
-        # Avoid repeating the title when summary starts with it.
         body = summary_raw
         if body.lower().startswith((item.title or "").strip().lower()):
             body = body[len((item.title or "").strip()) :].lstrip(" .—–-\n")
@@ -53,6 +53,12 @@ def format_item_block(idx: int, item: NewsItem) -> str:
     lines = [head, f"📌 {title}"]
     if summary_line:
         lines.append(summary_line)
-    if item.url:
-        lines.append(f'🔗 <a href="{escape(item.url, quote=True)}">открыть пост</a>')
+    links = item_urls(item)
+    if len(links) == 1:
+        lines.append(f'🔗 <a href="{escape(links[0], quote=True)}">открыть пост</a>')
+    elif len(links) > 1:
+        for i, link in enumerate(links, start=1):
+            lines.append(
+                f'🔗 <a href="{escape(link, quote=True)}">источник {i}</a>'
+            )
     return "\n".join(lines) + "\n"

@@ -14,6 +14,7 @@ dependencies = [
   "feedparser>=6.0",
   "beautifulsoup4>=4.12",
   "lxml>=5.0",
+  "fuzzywuzzy>=0.18.0",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +25,11 @@ dev = [
 sumy = [
   "sumy>=0.11.0",
   "nltk>=3.9",
+]
+ml = [
+  "python-Levenshtein>=0.25.0",
+  "scikit-learn>=1.5.0",
+  "numpy>=1.26.0",
 ]
 
 [project.scripts]
