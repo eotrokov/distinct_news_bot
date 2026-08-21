@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-# Stop words for TF-IDF body similarity.
+# Stop words for TF-IDF body similarity (do NOT use for filtering posts).
 STOP_WORDS: list[str] = [
     "это",
     "все",
@@ -17,15 +17,71 @@ STOP_WORDS: list[str] = [
     "that",
 ]
 
-# Phrases that mark promo / noise / intro fluff.
+# Phrases that mark promo / noise / intro fluff — post is dropped from digest.
 STOP_PHRASES: list[str] = [
     "всем привет",
     "доброе утро",
+    "добрый день",
+    "добрый вечер",
     "не забудьте подписаться",
+    "подписывайтесь",
+    "подпишись на канал",
+    "подпишитесь",
     "ставьте 🔥",
+    "ставьте лайк",
+    "жми лайк",
+    "ставьте огонек",
+    "ставьте огонёк",
     "пишите в комментах",
+    "пишите в комментариях",
+    "ссылка в описании",
+    "ссылка в шапке",
+    "ссылка в био",
+    "переходи по ссылке",
+    "переходите по ссылке",
     "реклама",
     "erid",
+    "промокод",
+    "успей купить",
+    "только сегодня",
+    "бесплатная подписка",
+    "партнерский материал",
+    "партнёрский материал",
+    "по заявкам",
+    "сегодня мы разберем",
+    "сегодня мы разберём",
+    "наш курс",
+    "запись на курс",
+    "интенсив для",
+    "buy now",
+    "limited offer",
+    "subscribe now",
+    "follow us",
+]
+
+# Single words/tokens: if found in title/summary, post is dropped.
+BLOCK_WORDS: list[str] = [
+    "розыгрыш",
+    "giveaway",
+    "конкурс",
+    "промокод",
+    "скидк",
+    "рассрочк",
+    "инфобиз",
+    "марафон",
+    "вебинар",
+    "подписывайтесь",
+    "подпишись",
+    "лайкните",
+    "репост",
+    "реклама",
+    "erid",
+    "промо",
+    "купон",
+    "coupon",
+    "discount",
+    "sale",
+    "розыгрыше",
 ]
 
 IMPORTANT_KEYWORDS: list[str] = [

@@ -22,6 +22,7 @@ def test_filter_noise_removes_ads_and_short():
     items = [
         _item("Купить сейчас со скидкой", "Только сегодня акция utm_source=ads"),
         _item("Всем привет", "Не забудьте подписаться и пишите в комментах"),
+        _item("Розыгрыш iPhone среди подписчиков канала сегодня вечером", "Условия в закрепе"),
         _item("Hi"),
         _item(
             "Google подтвердил spam update",

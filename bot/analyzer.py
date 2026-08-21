@@ -14,6 +14,7 @@ warnings.filterwarnings("ignore", message="Using slow pure-python SequenceMatche
 from fuzzywuzzy import fuzz
 
 from bot.config import (
+    BLOCK_WORDS,
     IMPORTANT_KEYWORDS,
     KEYWORD_CATEGORIES,
     STOP_PHRASES,
@@ -69,6 +70,8 @@ TFIDF_THRESHOLD = 0.7
 MIN_WORDS = 5
 
 _STOP_SET = {w.lower() for w in STOP_WORDS}
+_BLOCK_WORDS = [w.lower() for w in BLOCK_WORDS if w.strip()]
+_STOP_PHRASES = [p.lower() for p in STOP_PHRASES if p.strip()]
 
 
 def item_urls(item: NewsItem) -> list[str]:
@@ -137,7 +140,9 @@ class NewsAnalyzer:
             words = [w for w in re.split(r"\s+", blob) if w]
             if len(words) < MIN_WORDS:
                 continue
-            if any(phrase in blob for phrase in STOP_PHRASES):
+            if any(phrase in blob for phrase in _STOP_PHRASES):
+                continue
+            if any(word in blob for word in _BLOCK_WORDS):
                 continue
             if any(rx.search(blob) for rx in _NOISE_REGEXES):
                 continue
@@ -241,7 +246,9 @@ class NewsAnalyzer:
         best_score = float("-inf")
         for sentence in sentences:
             lower = sentence.lower()
-            if any(phrase in lower for phrase in STOP_PHRASES):
+            if any(phrase in lower for phrase in _STOP_PHRASES):
+                continue
+            if any(word in lower for word in _BLOCK_WORDS):
                 continue
             # Phrase-aware: "core update", "ai overview", etc.
             hits = sum(1 for kw in important if kw in lower)
