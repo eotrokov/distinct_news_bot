@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from bot.db import Database
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 AWAITING_KEY = "awaiting"
 
 MENU_TEXT = (
-    "Управление ботом кнопками.\n"
+    "Выжимка постов из ваших источников — одна лента вместо обхода каналов.\n"
     "Снизу — быстрые кнопки, здесь — подробное меню."
 )
 
@@ -87,12 +88,17 @@ async def send_digest_to_chat(
         return
 
     chunks = format_digest(items, errors, topics)
-    await status.edit_text(chunks[0])
+    await status.edit_text(chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     for chunk in chunks[1:]:
-        await update.effective_message.reply_text(chunk)
+        await update.effective_message.reply_text(
+            chunk,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
     digest.mark_digest_delivered(user_id, items)
     await update.effective_message.reply_text(
-        "Готово.", reply_markup=back_home_keyboard()
+        "Готово. Листайте выжимку выше — по ссылке открывается оригинал.",
+        reply_markup=back_home_keyboard(),
     )
 
 

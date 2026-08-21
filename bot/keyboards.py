@@ -5,7 +5,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMa
 from bot.models import Source
 
 # Reply keyboard labels (must match handlers)
-BTN_NEWS = "Сводка"
+BTN_NEWS = "Выжимка"
 BTN_SOURCES = "Источники"
 BTN_TOPICS = "Темы"
 BTN_MENU = "Меню"
@@ -30,7 +30,7 @@ def main_reply_keyboard() -> ReplyKeyboardMarkup:
 def main_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("Сводка новостей", callback_data="m:news")],
+            [InlineKeyboardButton("Выжимка постов", callback_data="m:news")],
             [
                 InlineKeyboardButton("Источники", callback_data="m:sources"),
                 InlineKeyboardButton("Темы", callback_data="m:topics"),

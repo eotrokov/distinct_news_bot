@@ -18,6 +18,12 @@ def normalize_title(title: str) -> str:
     return text
 
 
+def _normalize_body(item: NewsItem) -> str:
+    """Title + summary for cross-source duplicate detection."""
+    parts = [item.title or "", item.summary or ""]
+    return normalize_title(" ".join(parts))
+
+
 def fingerprint_for(item: NewsItem) -> str:
     """Stable fingerprint used for exact/near-duplicate tracking."""
     normalized = normalize_title(item.title)
@@ -40,20 +46,31 @@ def are_near_duplicates(a: NewsItem, b: NewsItem, threshold: float = 0.86) -> bo
 
     ta = normalize_title(a.title)
     tb = normalize_title(b.title)
-    if not ta or not tb:
-        return False
-    if ta == tb:
-        return True
+    if ta and tb:
+        if ta == tb:
+            return True
+        ratio = SequenceMatcher(None, ta, tb).ratio()
+        if ratio >= threshold:
+            return True
+        sa, sb = _token_set(a.title), _token_set(b.title)
+        if sa and sb:
+            jaccard = len(sa & sb) / len(sa | sb)
+            if jaccard >= 0.75 and ratio >= 0.72:
+                return True
 
-    ratio = SequenceMatcher(None, ta, tb).ratio()
-    if ratio >= threshold:
-        return True
+    # Same story rewritten across channels: compare body/summary.
+    ba, bb = _normalize_body(a), _normalize_body(b)
+    if len(ba) >= 40 and len(bb) >= 40:
+        body_ratio = SequenceMatcher(None, ba[:500], bb[:500]).ratio()
+        if body_ratio >= 0.82:
+            return True
+        sa, sb = _token_set(ba), _token_set(bb)
+        if sa and sb:
+            jaccard = len(sa & sb) / len(sa | sb)
+            if jaccard >= 0.7 and body_ratio >= 0.68:
+                return True
 
-    sa, sb = _token_set(a.title), _token_set(b.title)
-    if not sa or not sb:
-        return False
-    jaccard = len(sa & sb) / len(sa | sb)
-    return jaccard >= 0.75 and ratio >= 0.72
+    return False
 
 
 def deduplicate(items: list[NewsItem]) -> list[NewsItem]:

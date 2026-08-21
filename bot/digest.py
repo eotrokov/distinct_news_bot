@@ -17,6 +17,7 @@ from bot.fetchers import (
 )
 from bot.models import NewsItem, Source, SourceType
 from bot.topics import item_matches_topics
+from bot.excerpt import format_item_block
 
 logger = logging.getLogger(__name__)
 
@@ -118,48 +119,47 @@ def format_digest(
     errors: list[str],
     topics: list[str] | None = None,
 ) -> list[str]:
-    """Split digest into Telegram-safe message chunks (<= 4000 chars)."""
+    """Build a readable «портянка» of post excerpts with links.
+
+    Splits into Telegram-safe HTML chunks (<= ~3800 chars).
+    """
     topics = topics or []
     topic_note = ""
     if topics:
-        topic_note = "Темы: " + ", ".join(topics) + "\n"
+        topic_note = "Фильтр тем: " + ", ".join(topics) + "\n"
 
     chunks: list[str] = []
     if not items:
-        text = "Новых новостей с прошлого запроса нет."
+        text = "Новых постов с прошлого запроса нет."
         if topics:
             text = (
-                f"Новых новостей по темам ({', '.join(topics)}) "
+                f"Новых постов по темам ({', '.join(topics)}) "
                 "с прошлого запроса нет."
             )
         if errors:
             text += "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
         return [text]
 
-    header = f"Сводка: {len(items)} новостей без дублей\n{topic_note}"
+    header = (
+        f"Выжимка: {len(items)} постов из ваших источников\n"
+        f"(дубли между каналами убраны)\n"
+        f"{topic_note}"
+        f"Листайте ленту — по ссылке можно открыть оригинал.\n"
+    )
     lines = [header]
     for idx, item in enumerate(items, start=1):
-        when = ""
-        if item.published_at:
-            when = item.published_at.astimezone(timezone.utc).strftime("%d.%m %H:%M UTC")
-        link = f"\n{item.url}" if item.url else ""
-        block = (
-            f"\n{idx}. [{item.source_type}] {item.source_name}\n"
-            f"{item.title}"
-            f"{link}"
-            f"{f' ({when})' if when else ''}\n"
-        )
+        block = "\n" + format_item_block(idx, item)
         candidate = "".join(lines) + block
-        if len(candidate) > 3800:
+        if len(candidate) > 3700:
             chunks.append("".join(lines).rstrip())
-            lines = [f"(продолжение)\n{block}"]
+            lines = [f"<i>продолжение</i>\n{block}"]
         else:
             lines.append(block)
 
     body = "".join(lines).rstrip()
     if errors:
         err_block = "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
-        if len(body) + len(err_block) > 3900:
+        if len(body) + len(err_block) > 3800:
             chunks.append(body)
             chunks.append(err_block.strip())
         else:

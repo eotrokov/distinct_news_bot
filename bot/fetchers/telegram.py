@@ -88,7 +88,7 @@ class TelegramChannelFetcher(BaseFetcher):
                     published_at=published_at,
                     source_type="telegram",
                     source_name=source.title or f"@{handle}",
-                    summary=text[:500],
+                    summary=text[:900],
                     external_id=data_post or post_url or title,
                 )
             )
