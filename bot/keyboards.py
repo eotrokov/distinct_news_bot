@@ -10,7 +10,7 @@ BTN_SOURCES = "Источники"
 BTN_TOPICS = "Темы"
 BTN_MENU = "Меню"
 BTN_HELP = "Помощь"
-BTN_RESET = "Сброс курсора"
+BTN_RESET = "Сброс меток"
 
 REPLY_BUTTONS = {BTN_NEWS, BTN_SOURCES, BTN_TOPICS, BTN_MENU, BTN_HELP, BTN_RESET}
 
@@ -36,7 +36,7 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Темы", callback_data="m:topics"),
             ],
             [
-                InlineKeyboardButton("Сброс курсора", callback_data="m:reset"),
+                InlineKeyboardButton("Сброс меток", callback_data="m:reset"),
                 InlineKeyboardButton("Помощь", callback_data="m:help"),
             ],
         ]
@@ -90,10 +90,8 @@ def digest_page_keyboard(page: int, total: int) -> InlineKeyboardMarkup:
 def source_type_keyboard() -> InlineKeyboardMarkup:
     types = [
         ("Telegram", "telegram"),
-        ("РИА", "ria"),
         ("RSS", "rss"),
-        ("Facebook", "facebook"),
-        ("Twitter/X", "twitter"),
+        ("РИА", "ria"),
     ]
     rows = [
         [InlineKeyboardButton(label, callback_data=f"m:src_type:{stype}")]

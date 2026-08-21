@@ -1,128 +1,72 @@
 # Distinct News Bot
 
-Telegram-бот с **выжимкой постов** из ваших источников: одна лента (портянка) вместо обхода каналов по отдельности. Листаете здесь — в оригинал переходите по ссылке. Похожие посты из разных источников схлопываются.
+Telegram-бот для **SEO-дайджеста**: собирает посты из ваших каналов и RSS,
+убирает рекламу и дубли, раскладывает по темам и отдаёт одну выжимку.
 
-Пользователь добавляет источники командами или кнопками, затем `/news` (или кнопка «Выжимка») отдаёт посты **за последние N дней** (по умолчанию 3).
+- Период: `/news` (по умолчанию 3 дня) или `/news 5`
+- Пагинация: больше 10 пунктов — стрелки ◀ ▶ в одном сообщении
+- Фильтры: ✅ показывать / 🚫 скрывать
+- Лимит: 20 источников бесплатно, дальше 10⭐ / канал / 30 дней
 
-Поддерживаемые типы источников:
+## Источники
 
-| Тип | Что указать | Как читаем |
-| --- | --- | --- |
-| `telegram` | `@channel` / `channel` / `https://t.me/channel` | публичный превью `t.me/s/...` |
-| `ria` | `main`, `politics`, `world`, … или URL RSS | официальный RSS РИА |
-| `rss` | любой RSS/Atom URL | feedparser |
-| `facebook` | имя страницы или URL RSS | RSSHub (`RSSHUB_BASE_URL`) либо прямой RSS |
-| `twitter` | `@user` / URL профиля или RSS | RSSHub либо прямой RSS |
+| Тип | Что указать |
+| --- | --- |
+| `telegram` | `@channel` / `https://t.me/channel` (публичный канал) |
+| `rss` | любой RSS/Atom URL |
+| `ria` | `main`, `politics`, … или URL RSS РИА |
+
+Дополнительно в коде есть `facebook` / `twitter` через RSSHub (`RSSHUB_BASE_URL`) или прямой RSS — в меню не вынесены.
 
 ## Команды
 
-- `/start`, `/help` — справка
-- `/add <тип> <id|url> [название]` — добавить источник
-- `/remove <id>` — удалить
-- `/sources` — список
-- `/news [дни]` (или `/digest`) — выжимка за N дней (по умолчанию 3, макс. 30)
-- `/reset` — сброс служебных меток
-
-### Темы (фильтры)
-
-Если темы заданы, в `/news` попадают только материалы, где встречается **хотя бы одна** тема (в заголовке или тексте). Без тем — все новости.
-
-- `/topic add seo` — добавить тему (`/topic seo` тоже работает)
-- `/topic add marketing, ai` — несколько тем сразу
-- `/topic del seo` — удалить
-- `/topics` — список
-- `/topic clear` — сбросить все фильтры
-
-Синонимы: `/filter`, `/filters`.
-
-### Кнопки
-
-- Reply-кнопки внизу экрана: Выжимка / Источники / Темы / Меню / Помощь / Сброс курсора
-- `/menu` — inline-меню: выжимка, управление источниками и темами (добавление/удаление)
-- При добавлении бот просит прислать значение следующим сообщением (`/cancel` — отмена)
-
-Примеры:
-
-```text
-/add telegram meduzalive
-/add ria main
-/topic add seo
-/news
-/news 5
-```
-
-Дубли отсекаются по нормализованному заголовку, URL и похожести текстов между источниками.
+- `/news [дни]` — выжимка
+- `/add telegram @channel` / `/add rss <url>`
+- `/sources`, `/remove <id>`
+- `/topic + seo` — белый список (показывать)
+- `/topic - крипта` — чёрный список (скрывать)
+- `/topic del …`, `/topics`, `/topic clear`
+- `/menu`, `/help`, `/cancel`
 
 ## Локальный запуск
 
 ```bash
 cp .env.example .env
-# заполните TELEGRAM_BOT_TOKEN
+# TELEGRAM_BOT_TOKEN=...
 
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
 python -m bot
-```
-
-Тесты:
-
-```bash
 pytest -q
 ```
 
-## Docker
+## Docker / деплой
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
-docker compose logs -f bot
 ```
 
-Контейнер `distinct-news-bot` и volume `bot-data` изолированы — можно ставить рядом с уже работающими ботами на том же сервере.
-
-## Деплой на VPS (рядом с существующим ботом)
-
-На сервере (один раз, если Docker уже есть — достаточно создать каталог):
-
-```bash
-sudo bash deploy/setup-server.sh /opt/distinct-news-bot
-```
-
-С вашей машины:
+На VPS:
 
 ```bash
 export DEPLOY_HOST=your.server.ip
-export DEPLOY_USER=ubuntu
-# export DEPLOY_SSH_KEY=~/.ssh/id_ed25519
-# export DEPLOY_PATH=/opt/distinct-news-bot
-
-# один раз на сервере создайте .env:
-#   cp deploy/env.production.example /opt/distinct-news-bot/.env
-#   и пропишите TELEGRAM_BOT_TOKEN
-
+export DEPLOY_USER=root
 ./deploy/deploy.sh
 ```
 
-Скрипт синхронизирует файлы в `/opt/distinct-news-bot`, собирает образ и перезапускает только этот compose-проект. Другие контейнеры не трогает.
-
 ## Переменные окружения
 
-| Переменная | Описание |
-| --- | --- |
-| `TELEGRAM_BOT_TOKEN` | токен от BotFather |
-| `BOT_DB` | путь к SQLite |
-| `DIGEST_LIMIT` | максимум новостей в одной сводке (по умолчанию 30) |
-| `DEFAULT_DIGEST_DAYS` | период выжимки по умолчанию в днях (по умолчанию 3) |
-| `DEFAULT_LOOKBACK_HOURS` | устаревший alias; лучше `DEFAULT_DIGEST_DAYS` |
-| `RSSHUB_BASE_URL` | базовый URL RSSHub для Facebook/Twitter |
-| `LOG_LEVEL` | `INFO` / `DEBUG` |
-
-## Замечания по Facebook / Twitter
-
-Официальные API Facebook и X требуют отдельных ключей и часто платные. Бот использует RSS:
-
-1. поднимите [RSSHub](https://github.com/DIYgod/RSSHub) (или укажите публичный инстанс) в `RSSHUB_BASE_URL`;
-2. либо передайте готовый RSS URL в `/add facebook …` / `/add twitter …` / `/add rss …`.
-
-Telegram-каналы должны быть **публичными** (доступен `https://t.me/s/<channel>`).
+| Переменная | Описание | По умолчанию |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | токен BotFather | — |
+| `BOT_DB` | SQLite путь | `data/bot.sqlite3` |
+| `DIGEST_LIMIT` | макс. новостей в выжимке | 30 |
+| `DIGEST_PAGE_SIZE` | новостей на страницу | 10 |
+| `DEFAULT_DIGEST_DAYS` | период по умолчанию | 3 |
+| `FREE_SOURCE_LIMIT` | бесплатных источников | 20 |
+| `STARS_PER_EXTRA_SOURCE` | ⭐ за доп. слот | 10 |
+| `PAID_SLOT_DAYS` | срок слота | 30 |
+| `RSSHUB_BASE_URL` | опционально для FB/X | — |
+| `LOG_LEVEL` | `INFO` / `DEBUG` | `INFO` |

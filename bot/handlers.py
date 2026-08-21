@@ -47,53 +47,36 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """\
-Бот собирает одну выжимку (портянку) постов из ваших источников —
-не нужно заходить в каждый канал отдельно. Листаете ленту, по ссылке
-открываете оригинал, если нужно. Похожие посты из разных каналов схлопываются.
+Distinct News — SEO-дайджест из ваших Telegram-каналов и RSS.
 
-Кнопки:
-• снизу экрана — быстрые действия
-• /menu — подробное inline-меню
-• если новостей >10 — стрелки ◀ ▶ в сообщении выжимки
+Бот собирает посты за выбранный период, убирает рекламу и дубли,
+раскладывает по темам и отдаёт одну выжимку. Если пунктов больше 10 —
+листайте стрелками ◀ ▶ в том же сообщении.
 
 Лимиты:
 • до 20 источников бесплатно
-• дальше — 10⭐ Telegram Stars за канал на месяц
+• дальше — 10⭐ за канал на 30 дней
 
 Команды:
-/menu — открыть меню
-/add <тип> <id|url> [название] — добавить источник
-/remove <id> — удалить источник
+/news [дни] — выжимка (по умолчанию 3 дня, макс. 30)
+/add telegram @channel — добавить канал
+/add rss <url> — добавить RSS
 /sources — список источников
-/topic + <тема> — ✅ показывать только такие (белый список)
-/topic - <тема> — 🚫 скрывать такие (чёрный список)
-/topic del <тема> — удалить тему из фильтров
-/topic include <тема> / /topic exclude <тема>
-/topics — список фильтров
-/topic clear — сбросить все темы
-/topic clear include|exclude — сбросить один список
-/news [дни] — выжимка за N дней (по умолчанию 3, макс. 30)
-/reset — служебный сброс служебных меток
-/cancel — отменить ввод
-/help — эта справка
+/remove <id> — удалить источник
 
-Если задан белый список (✅), в выжимку попадают только совпадения.
-Чёрный список (🚫) всегда отсекает совпадения. Без фильтров — все посты
-(кроме стоп-слов/рекламы).
+Фильтры тем:
+/topic + seo — ✅ показывать только такие
+/topic - крипта — 🚫 скрывать такие
+/topic del seo — убрать тему
+/topics — оба списка
+/topic clear — сбросить фильтры
 
-Типы источников:
-• telegram — публичный канал (@channel)
-• ria — лента РИА (main, politics, world, …) или URL RSS
-• rss — любой RSS/Atom URL
-• facebook — страница (нужен RSSHUB_BASE_URL) или URL RSS
-• twitter — аккаунт X/Twitter (нужен RSSHUB_BASE_URL) или URL RSS
+/menu — меню · /cancel — отмена ввода · /help — справка
 
 Примеры:
-/add telegram bbcnews
-/add ria main
-/topic + seo
-/topic - крипта
-/news
+/add telegram searchengines
+/topic + алгоритм
+/topic - розыгрыш
 /news 5
 """
 
@@ -104,8 +87,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         db.ensure_user(update.effective_user.id)
     if update.message:
         await update.message.reply_text(
-            "Привет! Я собираю выжимку постов из ваших каналов в одну ленту — "
-            "читаете портянку здесь, в оригинал переходите по ссылке.",
+            "Привет! Соберу SEO-выжимку из ваших каналов и RSS: "
+            "дубли и рекламу уберу, темы можно фильтровать ✅/🚫.\n"
+            "Нажмите «Выжимка» или /news — справка: /help",
             reply_markup=main_reply_keyboard(),
         )
         await update.message.reply_text(
@@ -387,8 +371,8 @@ async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     db: Database = context.application.bot_data["db"]
     db.reset_last_digest_at(update.effective_user.id)
     await update.message.reply_text(
-        "Служебные метки сброшены. Период выжимки задаётся через "
-        "/news [дни] (по умолчанию 3).",
+        "Служебные метки сброшены. На период выжимки это не влияет — "
+        "задайте его через /news [дни] (по умолчанию 3).",
         reply_markup=main_reply_keyboard(),
     )
 

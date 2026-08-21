@@ -65,8 +65,6 @@ BLOCK_WORDS: list[str] = [
     "giveaway",
     "конкурс",
     "промокод",
-    "скидк",
-    "рассрочк",
     "инфобиз",
     "марафон",
     "вебинар",
@@ -76,12 +74,7 @@ BLOCK_WORDS: list[str] = [
     "репост",
     "реклама",
     "erid",
-    "промо",
-    "купон",
     "coupon",
-    "discount",
-    "sale",
-    "розыгрыше",
 ]
 
 IMPORTANT_KEYWORDS: list[str] = [

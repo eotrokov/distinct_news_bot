@@ -245,6 +245,20 @@ class Database:
         created = _utc_now()
         expires = created + timedelta(days=max(1, int(days)))
         with self.connect() as conn:
+            if telegram_payment_charge_id:
+                existing = conn.execute(
+                    """
+                    SELECT created_at, expires_at FROM paid_slots
+                    WHERE telegram_payment_charge_id = ?
+                    LIMIT 1
+                    """,
+                    (telegram_payment_charge_id,),
+                ).fetchone()
+                if existing:
+                    return (
+                        _parse_dt(existing["created_at"]) or created,
+                        _parse_dt(existing["expires_at"]) or expires,
+                    )
             conn.execute(
                 """
                 INSERT INTO paid_slots(

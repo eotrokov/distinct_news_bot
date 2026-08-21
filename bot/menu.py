@@ -43,10 +43,10 @@ AWAITING_KEY = "awaiting"
 DIGEST_SESSIONS_KEY = "digest_sessions"
 
 MENU_TEXT = (
-    "Выжимка постов за последние дни — одна лента вместо обхода каналов.\n"
-    "По умолчанию 3 дня; команда /news 5 — за 5 дней.\n"
-    "Если новостей больше 10 — листайте стрелками.\n"
-    "Снизу — быстрые кнопки, здесь — подробное меню."
+    "SEO-выжимка из ваших каналов и RSS.\n"
+    "По умолчанию — последние 3 дня (/news 5 — за 5).\n"
+    "Больше 10 пунктов — листайте ◀ ▶.\n"
+    "Темы: ✅ показывать / 🚫 скрывать."
 )
 
 
@@ -261,10 +261,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if data.startswith("m:dg:"):
-        await query.answer()
         try:
             page = int(data.split(":")[2])
         except (IndexError, ValueError):
+            await query.answer()
             return
         pages = _get_digest_pages(context, user_id)
         if not pages:
@@ -273,6 +273,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 show_alert=True,
             )
             return
+        await query.answer()
         page = max(0, min(page, len(pages) - 1))
         sessions = context.application.bot_data.get(DIGEST_SESSIONS_KEY) or {}
         if user_id in sessions:
@@ -313,7 +314,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         clear_awaiting(context)
         db.reset_last_digest_at(user_id)
         await query.edit_message_text(
-            "Служебные метки сброшены. Период задаётся через /news [дни] (по умолчанию 3).",
+            "Служебные метки сброшены. На период выжимки это не влияет — "
+            "задайте его через /news [дни] (по умолчанию 3).",
             reply_markup=back_home_keyboard(),
         )
         return
@@ -426,7 +428,8 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif text == BTN_RESET:
         db.reset_last_digest_at(update.effective_user.id)
         await update.message.reply_text(
-            "Служебные метки сброшены. Период задаётся через /news [дни] (по умолчанию 3).",
+            "Служебные метки сброшены. На период выжимки это не влияет — "
+            "задайте его через /news [дни] (по умолчанию 3).",
             reply_markup=main_reply_keyboard(),
         )
 

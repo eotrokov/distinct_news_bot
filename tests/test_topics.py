@@ -21,6 +21,9 @@ def test_item_matches_topics():
     assert item_matches_topics("Новости", "продвижение и seo", ["seo"])
     assert not item_matches_topics("Погода завтра", "дождь", ["seo"])
     assert not item_matches_topics("Anything", "", [])  # empty → no match
+    # Short token must not match inside unrelated words.
+    assert not item_matches_topics("He said nothing", "", ["ai"])
+    assert item_matches_topics("New AI overview", "", ["ai"])
 
 
 def test_item_passes_topic_filters_include_and_exclude():

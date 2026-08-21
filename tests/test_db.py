@@ -45,8 +45,15 @@ def test_paid_slots_and_source_limit(tmp_path):
     assert len(active) == 2
     assert len(paused) == 1
 
-    created, expires = db.add_paid_slot(user_id, stars_paid=10, days=30, telegram_payment_charge_id="x")
+    created, expires = db.add_paid_slot(
+        user_id, stars_paid=10, days=30, telegram_payment_charge_id="charge-1"
+    )
     assert expires > created
+    assert db.count_active_paid_slots(user_id) == 1
+    # Idempotent: same charge id must not create a second slot.
+    db.add_paid_slot(
+        user_id, stars_paid=10, days=30, telegram_payment_charge_id="charge-1"
+    )
     assert db.count_active_paid_slots(user_id) == 1
     assert db.source_limit(user_id, free_limit=2) == 3
     active2, paused2 = db.list_active_sources(user_id, free_limit=2)

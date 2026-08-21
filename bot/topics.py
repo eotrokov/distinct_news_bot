@@ -83,12 +83,21 @@ def parse_topic_args(args: list[str]) -> list[str]:
 
 
 def item_matches_topics(title: str, summary: str, topics: list[str]) -> bool:
-    """True if text matches any topic. Empty topics → no match for callers that care."""
+    """True if text matches any topic (short tokens use word boundaries)."""
     if not topics:
         return False
     haystack = f"{title or ''}\n{summary or ''}".lower()
     haystack = unicodedata.normalize("NFKC", haystack)
     for topic in topics:
+        topic = (topic or "").strip().lower()
+        if not topic:
+            continue
+        # Avoid "ai" matching inside "said": short tokens need word boundaries.
+        if len(topic) <= 3:
+            pattern = re.compile(rf"(?<!\w){re.escape(topic)}(?!\w)", re.IGNORECASE)
+            if pattern.search(haystack):
+                return True
+            continue
         if topic in haystack:
             return True
         pattern = re.compile(rf"(?<!\w){re.escape(topic)}(?!\w)", re.IGNORECASE)
