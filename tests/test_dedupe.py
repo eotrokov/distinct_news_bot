@@ -70,13 +70,13 @@ def test_parse_add_args():
 
 
 def test_format_digest_empty():
-    chunks = format_digest([], ["timeout"])
-    assert "Новых постов" in chunks[0]
+    chunks = format_digest([], ["timeout"], days=3)
+    assert "3 дн" in chunks[0]
     assert "timeout" in chunks[0]
 
 
 def test_format_digest_with_topics():
-    chunks = format_digest([], [], ["seo"])
+    chunks = format_digest([], [], ["seo"], days=3)
     assert "seo" in chunks[0]
 
 
@@ -89,10 +89,13 @@ def test_format_digest_excerpt_and_link():
             summary="Длинный текст поста про событие и детали для читателя ленты.",
         )
     ]
-    chunks = format_digest(items, [])
+    chunks = format_digest(items, [], days=3)
     assert "Выжимка" in chunks[0]
+    assert "Период: последние 3 дн." in chunks[0]
     assert "открыть пост" in chunks[0]
     assert "https://example.com/post/1" in chunks[0]
+    assert "📌" in chunks[0]
+    assert "📝" in chunks[0]
     assert "Длинный текст" in chunks[0]
 
 
@@ -102,3 +105,13 @@ def test_build_excerpt_prefers_summary():
         summary="Короткий заголовок и продолжение текста поста здесь.",
     )
     assert "продолжение" in build_excerpt(item)
+
+
+def test_parse_days_arg():
+    from bot.digest import clamp_digest_days, parse_days_arg
+
+    assert parse_days_arg([]) is None
+    assert parse_days_arg(["5"]) == 5
+    assert clamp_digest_days(None, 3) == 3
+    assert clamp_digest_days(0, 3) == 1
+    assert clamp_digest_days(99, 3) == 30

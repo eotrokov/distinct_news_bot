@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from bot.config import Settings
 from bot.db import Database
 from bot.dedupe import deduplicate, fingerprint_for
+from bot.excerpt import format_item_block
 from bot.fetchers import (
     FacebookFetcher,
     FetchError,
@@ -17,9 +18,27 @@ from bot.fetchers import (
 )
 from bot.models import NewsItem, Source, SourceType
 from bot.topics import item_matches_topics
-from bot.excerpt import format_item_block
 
 logger = logging.getLogger(__name__)
+
+MIN_DIGEST_DAYS = 1
+MAX_DIGEST_DAYS = 30
+
+
+def clamp_digest_days(days: int | None, default: int) -> int:
+    if days is None:
+        return max(MIN_DIGEST_DAYS, min(MAX_DIGEST_DAYS, default))
+    return max(MIN_DIGEST_DAYS, min(MAX_DIGEST_DAYS, int(days)))
+
+
+def parse_days_arg(args: list[str] | None) -> int | None:
+    """Parse `/news 5` style argument. None → use settings default."""
+    if not args:
+        return None
+    raw = args[0].strip().lower().rstrip("dд")
+    if not raw.isdigit():
+        raise ValueError("Формат: /news [дни], например /news 5 (1–30)")
+    return int(raw)
 
 
 class DigestService:
@@ -35,19 +54,28 @@ class DigestService:
             "twitter": TwitterFetcher(self.rss, settings.rsshub_base_url),
         }
 
-    async def collect_for_user(self, user_id: int) -> tuple[list[NewsItem], list[str], list[str]]:
-        """Return (items, errors, active_topics)."""
+    async def collect_for_user(
+        self,
+        user_id: int,
+        days: int | None = None,
+    ) -> tuple[list[NewsItem], list[str], list[str], int]:
+        """Return (items, errors, active_topics, days_used).
+
+        Period is strictly the last N days (default from settings),
+        not since the previous /news request.
+        """
+        days_used = clamp_digest_days(days, self.settings.default_digest_days)
         sources = self.db.list_sources(user_id)
         if not sources:
-            return [], ["Нет источников. Добавьте через /add"], self.db.list_topics(user_id)
+            return (
+                [],
+                ["Нет источников. Добавьте через /add"],
+                self.db.list_topics(user_id),
+                days_used,
+            )
 
         topics = self.db.list_topics(user_id)
-
-        since = self.db.get_last_digest_at(user_id)
-        if since is None:
-            since = datetime.now(timezone.utc) - timedelta(
-                hours=self.settings.default_lookback_hours
-            )
+        since = datetime.now(timezone.utc) - timedelta(days=days_used)
 
         results = await asyncio.gather(
             *[self._safe_fetch(source) for source in sources],
@@ -62,33 +90,26 @@ class DigestService:
                 errors.append(f"#{source.id} {source.title}: {err}")
             items.extend(fetched)
 
-        # Keep only items newer than last digest (when date is known).
         filtered: list[NewsItem] = []
         for item in items:
             if item.published_at is None or item.published_at >= since:
                 filtered.append(item)
 
-        # Topic filter (OR): empty topics → keep all.
         if topics:
             filtered = [
                 item
                 for item in filtered
-                if item_matches_topics(item.title, item.summary, topics)
+                if item_matches_topics(item.title, item.summary or "", topics)
             ]
 
         unique = deduplicate(filtered)
 
-        # Drop items already shown to this user.
-        fps = [fingerprint_for(item) for item in unique]
-        unseen_fps = self.db.filter_unseen(user_id, fps)
-        fresh = [item for item, fp in zip(unique, fps) if fp in unseen_fps]
-
         # Newest first, then truncate.
-        fresh.sort(
+        unique.sort(
             key=lambda i: i.published_at or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True,
         )
-        return fresh[: self.settings.digest_limit], errors, topics
+        return unique[: self.settings.digest_limit], errors, topics, days_used
 
     async def _safe_fetch(self, source: Source) -> tuple[list[NewsItem], str | None]:
         fetcher = self.fetchers.get(source.source_type)
@@ -105,6 +126,8 @@ class DigestService:
             return [], f"ошибка: {exc}"
 
     def mark_digest_delivered(self, user_id: int, items: list[NewsItem]) -> None:
+        # Keep last_digest_at / seen for compatibility and future features,
+        # but period selection no longer depends on them.
         now = datetime.now(timezone.utc)
         fingerprints = [
             (fingerprint_for(item), item.url, item.title) for item in items
@@ -118,23 +141,23 @@ def format_digest(
     items: list[NewsItem],
     errors: list[str],
     topics: list[str] | None = None,
+    days: int | None = None,
 ) -> list[str]:
-    """Build a readable «портянка» of post excerpts with links.
-
-    Splits into Telegram-safe HTML chunks (<= ~3800 chars).
-    """
+    """Build a readable «портянка» of post excerpts with links."""
     topics = topics or []
     topic_note = ""
     if topics:
         topic_note = "Фильтр тем: " + ", ".join(topics) + "\n"
+    days_note = f"Период: последние {days} дн.\n" if days else ""
 
     chunks: list[str] = []
     if not items:
-        text = "Новых постов с прошлого запроса нет."
+        text = "За выбранный период новых постов нет."
+        if days:
+            text = f"За последние {days} дн. новых постов нет."
         if topics:
             text = (
-                f"Новых постов по темам ({', '.join(topics)}) "
-                "с прошлого запроса нет."
+                f"За период нет постов по темам ({', '.join(topics)})."
             )
         if errors:
             text += "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
@@ -142,6 +165,7 @@ def format_digest(
 
     header = (
         f"Выжимка: {len(items)} постов из ваших источников\n"
+        f"{days_note}"
         f"(дубли между каналами убраны)\n"
         f"{topic_note}"
         f"Листайте ленту — по ссылке можно открыть оригинал.\n"

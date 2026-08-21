@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 from bot.db import Database
-from bot.digest import parse_add_args
+from bot.digest import parse_add_args, parse_days_arg
 from bot.fetchers.ria import RIA_FEEDS
 from bot.fetchers.telegram import normalize_telegram_handle
 from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
@@ -51,8 +51,8 @@ HELP_TEXT = """\
 /topic del <тема> — удалить тему
 /topics — список тем
 /topic clear — сбросить все темы
-/news — выжимка постов с прошлого запроса
-/reset — сбросить точку прошлого запроса
+/news [дни] — выжимка за N дней (по умолчанию 3, макс. 30)
+/reset — служебный сброс служебных меток
 /cancel — отменить ввод
 /help — эта справка
 
@@ -70,6 +70,7 @@ HELP_TEXT = """\
 /add ria main
 /topic add seo
 /news
+/news 5
 """
 
 
@@ -239,7 +240,14 @@ async def topics_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await send_digest_to_chat(update, context)
+    if not update.message:
+        return
+    try:
+        days = parse_days_arg(list(context.args or []))
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    await send_digest_to_chat(update, context, days=days)
 
 
 async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -248,8 +256,8 @@ async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     db: Database = context.application.bot_data["db"]
     db.reset_last_digest_at(update.effective_user.id)
     await update.message.reply_text(
-        "Точка прошлого запроса сброшена. Следующий /news возьмёт новости "
-        "за период DEFAULT_LOOKBACK_HOURS.",
+        "Служебные метки сброшены. Период выжимки задаётся через "
+        "/news [дни] (по умолчанию 3).",
         reply_markup=main_reply_keyboard(),
     )
 

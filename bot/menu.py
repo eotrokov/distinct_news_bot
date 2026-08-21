@@ -33,7 +33,8 @@ logger = logging.getLogger(__name__)
 AWAITING_KEY = "awaiting"
 
 MENU_TEXT = (
-    "Выжимка постов из ваших источников — одна лента вместо обхода каналов.\n"
+    "Выжимка постов за последние дни — одна лента вместо обхода каналов.\n"
+    "По умолчанию 3 дня; команда /news 5 — за 5 дней.\n"
     "Снизу — быстрые кнопки, здесь — подробное меню."
 )
 
@@ -74,21 +75,26 @@ async def show_main_menu(
 async def send_digest_to_chat(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
+    days: int | None = None,
 ) -> None:
     if not update.effective_user or not update.effective_message:
         return
     digest: DigestService = context.application.bot_data["digest"]
     user_id = update.effective_user.id
-    status = await update.effective_message.reply_text("Собираю сводку…")
+    status = await update.effective_message.reply_text("Собираю выжимку…")
     try:
-        items, errors, topics = await digest.collect_for_user(user_id)
+        items, errors, topics, days_used = await digest.collect_for_user(
+            user_id, days=days
+        )
     except Exception:  # noqa: BLE001
         logger.exception("Digest failed for user %s", user_id)
-        await status.edit_text("Не удалось собрать сводку. Попробуйте позже.")
+        await status.edit_text("Не удалось собрать выжимку. Попробуйте позже.")
         return
 
-    chunks = format_digest(items, errors, topics)
-    await status.edit_text(chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    chunks = format_digest(items, errors, topics, days=days_used)
+    await status.edit_text(
+        chunks[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True
+    )
     for chunk in chunks[1:]:
         await update.effective_message.reply_text(
             chunk,
@@ -97,7 +103,8 @@ async def send_digest_to_chat(
         )
     digest.mark_digest_delivered(user_id, items)
     await update.effective_message.reply_text(
-        "Готово. Листайте выжимку выше — по ссылке открывается оригинал.",
+        "Готово. Листайте выжимку выше — по ссылке открывается оригинал.\n"
+        f"Период: {days_used} дн. (можно /news 5).",
         reply_markup=back_home_keyboard(),
     )
 
@@ -199,7 +206,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         clear_awaiting(context)
         db.reset_last_digest_at(user_id)
         await query.edit_message_text(
-            "Точка прошлого запроса сброшена.",
+            "Служебные метки сброшены. Период задаётся через /news [дни] (по умолчанию 3).",
             reply_markup=back_home_keyboard(),
         )
         return
@@ -288,7 +295,7 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif text == BTN_RESET:
         db.reset_last_digest_at(update.effective_user.id)
         await update.message.reply_text(
-            "Точка прошлого запроса сброшена.",
+            "Служебные метки сброшены. Период задаётся через /news [дни] (по умолчанию 3).",
             reply_markup=main_reply_keyboard(),
         )
 

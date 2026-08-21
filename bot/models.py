@@ -25,5 +25,5 @@ class NewsItem:
     published_at: datetime | None
     source_type: SourceType
     source_name: str
-    summary: str = ""
+    summary: str | None = None
     external_id: str = ""
