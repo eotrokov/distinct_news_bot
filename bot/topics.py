@@ -4,6 +4,11 @@ import re
 import shlex
 import unicodedata
 
+TopicKind = str  # "include" | "exclude"
+
+KIND_INCLUDE = "include"
+KIND_EXCLUDE = "exclude"
+
 
 def normalize_topic(raw: str) -> str:
     text = unicodedata.normalize("NFKC", raw or "").strip().lower()
@@ -13,6 +18,35 @@ def normalize_topic(raw: str) -> str:
     if len(text) > 80:
         raise ValueError("Тема слишком длинная (макс. 80 символов)")
     return text
+
+
+def normalize_kind(raw: str | None) -> TopicKind:
+    value = (raw or KIND_INCLUDE).strip().lower()
+    if value in {
+        KIND_INCLUDE,
+        "in",
+        "pos",
+        "positive",
+        "+",
+        "show",
+        "whitelist",
+        "allow",
+    }:
+        return KIND_INCLUDE
+    if value in {
+        KIND_EXCLUDE,
+        "ex",
+        "neg",
+        "negative",
+        "-",
+        "hide",
+        "ban",
+        "block",
+        "blacklist",
+        "deny",
+    }:
+        return KIND_EXCLUDE
+    raise ValueError("Тип темы: include (показывать) или exclude (скрывать)")
 
 
 def parse_topic_args(args: list[str]) -> list[str]:
@@ -49,9 +83,9 @@ def parse_topic_args(args: list[str]) -> list[str]:
 
 
 def item_matches_topics(title: str, summary: str, topics: list[str]) -> bool:
-    """True if text matches any topic. Empty topics → match all."""
+    """True if text matches any topic. Empty topics → no match for callers that care."""
     if not topics:
-        return True
+        return False
     haystack = f"{title or ''}\n{summary or ''}".lower()
     haystack = unicodedata.normalize("NFKC", haystack)
     for topic in topics:
@@ -61,3 +95,24 @@ def item_matches_topics(title: str, summary: str, topics: list[str]) -> bool:
         if pattern.search(haystack):
             return True
     return False
+
+
+def item_passes_topic_filters(
+    title: str,
+    summary: str,
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
+) -> bool:
+    """Apply positive (include) and negative (exclude) topic filters.
+
+    - exclude match → drop
+    - if include list non-empty → keep only matches
+    - if include empty → keep all that are not excluded
+    """
+    include = include or []
+    exclude = exclude or []
+    if exclude and item_matches_topics(title, summary, exclude):
+        return False
+    if include and not item_matches_topics(title, summary, include):
+        return False
+    return True

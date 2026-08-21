@@ -174,14 +174,36 @@ def sources_text(db: Database, settings: Settings, user_id: int) -> str:
 
 def topics_text(db: Database, user_id: int) -> str:
     rows = db.list_topic_rows(user_id)
+    include = [(i, t) for i, t, k in rows if k == "include"]
+    exclude = [(i, t) for i, t, k in rows if k == "exclude"]
     if not rows:
         return (
-            "Темы не заданы — сводка без фильтра.\n"
-            "Нажмите «Добавить тему» или /topic add seo"
+            "Фильтры тем не заданы — в выжимку попадает всё "
+            "(кроме стоп-слов/рекламы).\n\n"
+            "✅ Показывать — белый список (только эти темы)\n"
+            "🚫 Скрывать — чёрный список (эти темы не показывать)\n\n"
+            "Команды: /topic + seo · /topic - крипта\n"
+            "Или кнопки ниже."
         )
-    lines = ["Активные темы (OR-фильтр). Нажмите тему, чтобы удалить:"]
-    for _, topic in rows:
-        lines.append(f"• {topic}")
+    lines = [
+        "Фильтры тем:",
+        "",
+        "✅ Показывать (если список не пуст — только эти):",
+    ]
+    if include:
+        for _, topic in include:
+            lines.append(f"  • {topic}")
+    else:
+        lines.append("  — нет (показываем всё, кроме скрытых)")
+    lines.append("")
+    lines.append("🚫 Скрывать (не попадут в выжимку):")
+    if exclude:
+        for _, topic in exclude:
+            lines.append(f"  • {topic}")
+    else:
+        lines.append("  — нет")
+    lines.append("")
+    lines.append("Нажмите тему, чтобы удалить.")
     return "\n".join(lines)
 
 
@@ -336,22 +358,34 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             text, reply_markup=_sources_markup(db, settings, user_id)
         )
         return
-    if data == "m:topic_add":
-        set_awaiting(context, {"kind": "topic"})
-        await query.edit_message_text(
-            "Пришлите тему или несколько через запятую/пробел.\n"
-            "Пример: seo\nПример: marketing ai\n\n/cancel — отмена.",
-            reply_markup=back_home_keyboard(),
-        )
+    if data == "m:topic_add" or data.startswith("m:topic_add:"):
+        kind = "include"
+        if data.startswith("m:topic_add:"):
+            kind = data.split(":")[2]
+            if kind not in {"include", "exclude"}:
+                kind = "include"
+        set_awaiting(context, {"kind": "topic", "topic_kind": kind})
+        if kind == "exclude":
+            prompt = (
+                "Пришлите темы для 🚫 СКРЫВАТЬ (через запятую/пробел).\n"
+                "Пример: крипта розыгрыш\n\n/cancel — отмена."
+            )
+        else:
+            prompt = (
+                "Пришлите темы для ✅ ПОКАЗЫВАТЬ (через запятую/пробел).\n"
+                "Пример: seo алгоритм\n\n/cancel — отмена."
+            )
+        await query.edit_message_text(prompt, reply_markup=back_home_keyboard())
         return
     if data.startswith("m:topic_del:"):
         topic_id = int(data.split(":")[2])
         removed = db.remove_topic_by_id(user_id, topic_id)
-        note = (
-            f"Тема «{removed}» удалена.\n\n"
-            if removed
-            else "Тема не найдена.\n\n"
-        )
+        if removed:
+            topic, kind = removed
+            mark = "✅" if kind == "include" else "🚫"
+            note = f"Тема {mark} «{topic}» удалена.\n\n"
+        else:
+            note = "Тема не найдена.\n\n"
         text = note + topics_text(db, user_id)
         await query.edit_message_text(
             text, reply_markup=topics_keyboard(db.list_topic_rows(user_id))
@@ -436,15 +470,19 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
 
         if kind == "topic":
+            topic_kind = str(awaiting.get("topic_kind") or "include")
+            if topic_kind not in {"include", "exclude"}:
+                topic_kind = "include"
             topics = parse_topic_args(text.split())
             added: list[str] = []
             for topic in topics:
                 try:
-                    db.add_topic(user_id, topic)
+                    db.add_topic(user_id, topic, kind=topic_kind)
                     added.append(topic)
                 except ValueError:
                     pass
             clear_awaiting(context)
+            mark = "✅" if topic_kind == "include" else "🚫"
             if not added:
                 await update.message.reply_text(
                     "Все указанные темы уже были добавлены.",
@@ -452,7 +490,7 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 )
                 return
             await update.message.reply_text(
-                "Добавлены темы: "
+                f"Добавлены {mark}: "
                 + ", ".join(added)
                 + "\n\n"
                 + topics_text(db, user_id),

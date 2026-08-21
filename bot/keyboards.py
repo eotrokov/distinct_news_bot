@@ -103,15 +103,21 @@ def source_type_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def topics_keyboard(topic_rows: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+def topics_keyboard(
+    topic_rows: list[tuple[int, str, str]],
+) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for topic_id, topic in topic_rows:
-        label = f"Удалить: {topic}"[:60]
+    for topic_id, topic, kind in topic_rows:
+        mark = "✅" if kind == "include" else "🚫"
+        label = f"{mark} Удалить: {topic}"[:60]
         rows.append(
             [InlineKeyboardButton(label, callback_data=f"m:topic_del:{topic_id}")]
         )
     rows.append(
-        [InlineKeyboardButton("Добавить тему", callback_data="m:topic_add")]
+        [
+            InlineKeyboardButton("✅ Показывать", callback_data="m:topic_add:include"),
+            InlineKeyboardButton("🚫 Скрывать", callback_data="m:topic_add:exclude"),
+        ]
     )
     if topic_rows:
         rows.append(

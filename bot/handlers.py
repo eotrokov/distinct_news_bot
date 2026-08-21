@@ -40,6 +40,7 @@ from bot.menu import (
     show_main_menu,
     show_sources_panel,
     show_topics_panel,
+    topics_text,
 )
 from bot.topics import parse_topic_args
 
@@ -64,16 +65,21 @@ HELP_TEXT = """\
 /add <тип> <id|url> [название] — добавить источник
 /remove <id> — удалить источник
 /sources — список источников
-/topic add <тема> — добавить тему-фильтр
-/topic del <тема> — удалить тему
-/topics — список тем
+/topic + <тема> — ✅ показывать только такие (белый список)
+/topic - <тема> — 🚫 скрывать такие (чёрный список)
+/topic del <тема> — удалить тему из фильтров
+/topic include <тема> / /topic exclude <тема>
+/topics — список фильтров
 /topic clear — сбросить все темы
+/topic clear include|exclude — сбросить один список
 /news [дни] — выжимка за N дней (по умолчанию 3, макс. 30)
 /reset — служебный сброс служебных меток
 /cancel — отменить ввод
 /help — эта справка
 
-Если темы заданы, в выжимку попадают только посты, где встречается хотя бы одна тема. Без тем — все посты.
+Если задан белый список (✅), в выжимку попадают только совпадения.
+Чёрный список (🚫) всегда отсекает совпадения. Без фильтров — все посты
+(кроме стоп-слов/рекламы).
 
 Типы источников:
 • telegram — публичный канал (@channel)
@@ -85,7 +91,8 @@ HELP_TEXT = """\
 Примеры:
 /add telegram bbcnews
 /add ria main
-/topic add seo
+/topic + seo
+/topic - крипта
 /news
 /news 5
 """
@@ -268,50 +275,74 @@ async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     action = args[0].lower()
     rest = args[1:]
 
+    def _status() -> str:
+        return topics_text(db, user_id)
+
     try:
-        if action in {"add", "a", "+"}:
+        if action in {"add", "a", "+", "include", "in", "pos", "show"}:
             topics = parse_topic_args(rest)
             added: list[str] = []
             for topic in topics:
                 try:
-                    db.add_topic(user_id, topic)
+                    db.add_topic(user_id, topic, kind="include")
                     added.append(topic)
                 except ValueError:
                     pass
             if not added:
-                await update.message.reply_text("Все указанные темы уже были добавлены.")
+                await update.message.reply_text("Все указанные темы уже в ✅ списке.")
                 return
             await update.message.reply_text(
-                "Добавлены темы: " + ", ".join(added) + "\n"
-                "Сейчас активны: " + ", ".join(db.list_topics(user_id))
+                "✅ Добавлены (показывать): " + ", ".join(added) + "\n\n" + _status()
             )
             return
 
-        if action in {"del", "delete", "remove", "rm", "-"}:
+        if action in {"exclude", "ex", "ban", "hide", "neg", "block", "-"}:
+            topics = parse_topic_args(rest)
+            added = []
+            for topic in topics:
+                try:
+                    db.add_topic(user_id, topic, kind="exclude")
+                    added.append(topic)
+                except ValueError:
+                    pass
+            if not added:
+                await update.message.reply_text("Все указанные темы уже в 🚫 списке.")
+                return
+            await update.message.reply_text(
+                "🚫 Добавлены (скрывать): " + ", ".join(added) + "\n\n" + _status()
+            )
+            return
+
+        if action in {"del", "delete", "remove", "rm"}:
             topics = parse_topic_args(rest)
             removed = [t for t in topics if db.remove_topic(user_id, t)]
             if not removed:
                 await update.message.reply_text("Таких тем нет.")
                 return
-            remaining = db.list_topics(user_id)
-            tail = (
-                "Остались: " + ", ".join(remaining)
-                if remaining
-                else "Тем больше нет — /news покажет все новости."
-            )
             await update.message.reply_text(
-                "Удалены: " + ", ".join(removed) + "\n" + tail
+                "Удалены: " + ", ".join(removed) + "\n\n" + _status()
             )
             return
 
-        if action in {"list", "ls", "show"}:
+        if action in {"list", "ls"}:
             await show_topics_panel(update, context)
             return
 
         if action in {"clear", "reset", "all"}:
-            count = db.clear_topics(user_id)
+            kind = None
+            if rest:
+                raw = rest[0].lower()
+                if raw in {"include", "+", "pos", "show"}:
+                    kind = "include"
+                elif raw in {"exclude", "-", "neg", "hide", "ban"}:
+                    kind = "exclude"
+            count = db.clear_topics(user_id, kind=kind)
+            label = {
+                "include": "из ✅ списка",
+                "exclude": "из 🚫 списка",
+            }.get(kind or "", "")
             await update.message.reply_text(
-                f"Сброшено тем: {count}. Теперь /news без фильтра по темам."
+                f"Сброшено тем {label}: {count}.\n\n" + _status()
             )
             return
 
@@ -319,16 +350,15 @@ async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         added = []
         for topic in topics:
             try:
-                db.add_topic(user_id, topic)
+                db.add_topic(user_id, topic, kind="include")
                 added.append(topic)
             except ValueError:
                 pass
         if not added:
-            await update.message.reply_text("Все указанные темы уже были добавлены.")
+            await update.message.reply_text("Все указанные темы уже в ✅ списке.")
             return
         await update.message.reply_text(
-            "Добавлены темы: " + ", ".join(added) + "\n"
-            "Сейчас активны: " + ", ".join(db.list_topics(user_id))
+            "✅ Добавлены (показывать): " + ", ".join(added) + "\n\n" + _status()
         )
     except ValueError as exc:
         await update.message.reply_text(str(exc))

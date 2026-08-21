@@ -76,8 +76,14 @@ def test_format_digest_empty():
 
 
 def test_format_digest_with_topics():
-    chunks = format_digest([], [], ["seo"], days=3)
+    chunks = format_digest(
+        [],
+        [],
+        {"include": ["seo"], "exclude": ["крипта"]},
+        days=3,
+    )
     assert "seo" in chunks[0]
+    assert "крипта" in chunks[0]
 
 
 def test_format_digest_excerpt_and_link():

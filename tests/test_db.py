@@ -57,13 +57,28 @@ def test_paid_slots_and_source_limit(tmp_path):
 def test_db_topics(tmp_path):
     db = Database(str(tmp_path / "topics.sqlite3"))
     user_id = 7
-    db.add_topic(user_id, "seo")
-    db.add_topic(user_id, "marketing")
-    assert db.list_topics(user_id) == ["marketing", "seo"]
+    db.add_topic(user_id, "seo", kind="include")
+    db.add_topic(user_id, "marketing", kind="include")
+    db.add_topic(user_id, "крипта", kind="exclude")
+    assert db.list_include_topics(user_id) == ["marketing", "seo"]
+    assert db.list_exclude_topics(user_id) == ["крипта"]
     rows = db.list_topic_rows(user_id)
-    assert len(rows) == 2
+    assert len(rows) == 3
     removed = db.remove_topic_by_id(user_id, rows[0][0])
-    assert removed == rows[0][1]
+    assert removed is not None
+    assert removed[0] == rows[0][1]
     assert db.remove_topic(user_id, "seo") in {True, False}
+    assert db.clear_topics(user_id, kind="exclude") >= 0
     assert db.clear_topics(user_id) >= 0
     assert db.list_topics(user_id) == []
+
+
+def test_topic_kind_switch(tmp_path):
+    db = Database(str(tmp_path / "topic-kind.sqlite3"))
+    user_id = 3
+    db.add_topic(user_id, "seo", kind="include")
+    # Moving same topic to exclude should update kind, not fail as duplicate.
+    topic, kind = db.add_topic(user_id, "seo", kind="exclude")
+    assert topic == "seo" and kind == "exclude"
+    assert db.list_include_topics(user_id) == []
+    assert db.list_exclude_topics(user_id) == ["seo"]

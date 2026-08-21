@@ -37,8 +37,10 @@ def test_sources_and_topics_keyboards():
     sk_paid = sources_keyboard([source], show_buy_slot=True, stars=10)
     assert any(b.callback_data == "m:buy_slot" for r in sk_paid.inline_keyboard for b in r)
 
-    tk = topics_keyboard([(9, "seo")])
+    tk = topics_keyboard([(9, "seo", "include"), (10, "crypto", "exclude")])
     assert any(b.callback_data == "m:topic_del:9" for r in tk.inline_keyboard for b in r)
+    assert any(b.callback_data == "m:topic_add:include" for r in tk.inline_keyboard for b in r)
+    assert any(b.callback_data == "m:topic_add:exclude" for r in tk.inline_keyboard for b in r)
 
     types = source_type_keyboard()
     assert any(b.callback_data == "m:src_type:telegram" for r in types.inline_keyboard for b in r)

@@ -18,7 +18,7 @@ from bot.fetchers import (
     TwitterFetcher,
 )
 from bot.models import NewsItem, Source, SourceType
-from bot.topics import item_matches_topics
+from bot.topics import item_passes_topic_filters
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +97,8 @@ class DigestService:
         self,
         user_id: int,
         days: int | None = None,
-    ) -> tuple[list[NewsItem], list[str], list[str], int, dict[str, Any]]:
-        """Return (items, errors, topics, days_used, analysis)."""
+    ) -> tuple[list[NewsItem], list[str], dict[str, list[str]], int, dict[str, Any]]:
+        """Return (items, errors, topic_filters, days_used, analysis)."""
         days_used = clamp_digest_days(days, self.settings.default_digest_days)
         empty_analysis: dict[str, Any] = {
             "categories": {},
@@ -111,11 +111,14 @@ class DigestService:
             },
         }
         sources = self.db.list_sources(user_id)
+        include_topics = self.db.list_include_topics(user_id)
+        exclude_topics = self.db.list_exclude_topics(user_id)
+        topic_meta = {"include": include_topics, "exclude": exclude_topics}
         if not sources:
             return (
                 [],
                 ["Нет источников. Добавьте через /add"],
-                self.db.list_topics(user_id),
+                topic_meta,
                 days_used,
                 empty_analysis,
             )
@@ -124,7 +127,6 @@ class DigestService:
             user_id, self.settings.free_source_limit
         )
         sources = active
-        topics = self.db.list_topics(user_id)
         since = datetime.now(timezone.utc) - timedelta(days=days_used)
 
         results = await asyncio.gather(
@@ -151,12 +153,16 @@ class DigestService:
             if item.published_at is None or item.published_at >= since:
                 filtered.append(item)
 
-        if topics:
-            filtered = [
-                item
-                for item in filtered
-                if item_matches_topics(item.title, item.summary or "", topics)
-            ]
+        filtered = [
+            item
+            for item in filtered
+            if item_passes_topic_filters(
+                item.title,
+                item.summary or "",
+                include=include_topics,
+                exclude=exclude_topics,
+            )
+        ]
 
         analysis = self.analyzer.process(filtered, period=days_used)
         flat: list[NewsItem] = []
@@ -179,7 +185,7 @@ class DigestService:
                     "final_count": len(limited),
                 },
             }
-        return limited, errors, topics, days_used, analysis
+        return limited, errors, topic_meta, days_used, analysis
 
     async def _safe_fetch(self, source: Source) -> tuple[list[NewsItem], str | None]:
         fetcher = self.fetchers.get(source.source_type)
@@ -222,17 +228,38 @@ class DigestService:
         )
 
 
+def _topic_filter_note(topics: list[str] | dict[str, list[str]] | None) -> str:
+    include, exclude = _split_topic_filters(topics)
+    parts: list[str] = []
+    if include:
+        parts.append("показывать: " + ", ".join(include))
+    if exclude:
+        parts.append("скрывать: " + ", ".join(exclude))
+    return "; ".join(parts)
+
+
+def _split_topic_filters(
+    topics: list[str] | dict[str, list[str]] | None,
+) -> tuple[list[str], list[str]]:
+    if not topics:
+        return [], []
+    if isinstance(topics, dict):
+        return list(topics.get("include") or []), list(topics.get("exclude") or [])
+    # Backward compat: plain list = include-only.
+    return list(topics), []
+
+
 def format_digest_result(
     result: dict[str, Any],
     period: int,
     *,
     errors: list[str] | None = None,
-    topics: list[str] | None = None,
+    topics: list[str] | dict[str, list[str]] | None = None,
     page_size: int = 10,
 ) -> list[str]:
     """Build digest pages: at most ``page_size`` news items per page."""
     errors = errors or []
-    topics = topics or []
+    include_topics, exclude_topics = _split_topic_filters(topics)
     days_used = int(period) if period else 3
     stats = result.get("stats") or {}
     categories = result.get("categories") or {}
@@ -245,10 +272,11 @@ def format_digest_result(
 
     if not flat:
         text = f"За последние {days_used} {_days_word(days_used)} новых постов нет."
-        if topics:
+        note = _topic_filter_note(topics)
+        if note:
             text = (
                 f"За последние {days_used} {_days_word(days_used)} нет постов "
-                f"по темам ({', '.join(topics)})."
+                f"по фильтру ({note})."
             )
         if errors:
             text += "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
@@ -257,8 +285,9 @@ def format_digest_result(
     header = (
         f"📰 Дайджест новостей SEO за последние {days_used} {_days_word(days_used)}"
     )
-    if topics:
-        header += f"\nФильтр тем: {', '.join(topics)}"
+    note = _topic_filter_note(topics)
+    if note:
+        header += f"\nФильтр тем: {note}"
 
     stats_line = (
         f"\n\n📊 Обработано постов: {stats.get('total_processed', len(flat))}, "

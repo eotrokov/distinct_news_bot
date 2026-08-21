@@ -77,6 +77,7 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
                     topic TEXT NOT NULL,
+                    kind TEXT NOT NULL DEFAULT 'include',
                     created_at TEXT NOT NULL,
                     UNIQUE(user_id, topic),
                     FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
@@ -101,6 +102,17 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_paid_slots_user_expires
                     ON paid_slots(user_id, expires_at);
                 """
+            )
+            self._migrate_topics_kind(conn)
+
+    def _migrate_topics_kind(self, conn: sqlite3.Connection) -> None:
+        cols = {
+            str(row[1])
+            for row in conn.execute("PRAGMA table_info(topics)").fetchall()
+        }
+        if "kind" not in cols:
+            conn.execute(
+                "ALTER TABLE topics ADD COLUMN kind TEXT NOT NULL DEFAULT 'include'"
             )
 
     def ensure_user(self, user_id: int) -> None:
@@ -313,21 +325,36 @@ class Database:
                 (user_id, cutoff_iso),
             )
 
-    def add_topic(self, user_id: int, topic: str) -> str:
+    def add_topic(
+        self, user_id: int, topic: str, kind: str = "include"
+    ) -> tuple[str, str]:
         self.ensure_user(user_id)
+        kind = "exclude" if kind == "exclude" else "include"
         now = _utc_now().isoformat()
         with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT id, kind FROM topics WHERE user_id = ? AND topic = ?",
+                (user_id, topic),
+            ).fetchone()
+            if existing:
+                if str(existing["kind"]) == kind:
+                    raise ValueError(f"Тема уже добавлена: {topic}")
+                conn.execute(
+                    "UPDATE topics SET kind = ? WHERE id = ?",
+                    (kind, int(existing["id"])),
+                )
+                return topic, kind
             try:
                 conn.execute(
                     """
-                    INSERT INTO topics(user_id, topic, created_at)
-                    VALUES (?, ?, ?)
+                    INSERT INTO topics(user_id, topic, kind, created_at)
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (user_id, topic, now),
+                    (user_id, topic, kind, now),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError(f"Тема уже добавлена: {topic}") from exc
-        return topic
+        return topic, kind
 
     def remove_topic(self, user_id: int, topic: str) -> bool:
         with self.connect() as conn:
@@ -337,10 +364,10 @@ class Database:
             )
             return cur.rowcount > 0
 
-    def remove_topic_by_id(self, user_id: int, topic_id: int) -> str | None:
+    def remove_topic_by_id(self, user_id: int, topic_id: int) -> tuple[str, str] | None:
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT topic FROM topics WHERE id = ? AND user_id = ?",
+                "SELECT topic, kind FROM topics WHERE id = ? AND user_id = ?",
                 (topic_id, user_id),
             ).fetchone()
             if not row:
@@ -349,30 +376,57 @@ class Database:
                 "DELETE FROM topics WHERE id = ? AND user_id = ?",
                 (topic_id, user_id),
             )
-            return str(row["topic"])
+            return str(row["topic"]), str(row["kind"] or "include")
 
-    def clear_topics(self, user_id: int) -> int:
+    def clear_topics(self, user_id: int, kind: str | None = None) -> int:
         with self.connect() as conn:
-            cur = conn.execute(
-                "DELETE FROM topics WHERE user_id = ?",
-                (user_id,),
-            )
+            if kind in {"include", "exclude"}:
+                cur = conn.execute(
+                    "DELETE FROM topics WHERE user_id = ? AND kind = ?",
+                    (user_id, kind),
+                )
+            else:
+                cur = conn.execute(
+                    "DELETE FROM topics WHERE user_id = ?",
+                    (user_id,),
+                )
             return int(cur.rowcount)
 
-    def list_topics(self, user_id: int) -> list[str]:
-        return [t for _, t in self.list_topic_rows(user_id)]
+    def list_topics(self, user_id: int, kind: str | None = None) -> list[str]:
+        return [t for _, t, _ in self.list_topic_rows(user_id, kind=kind)]
 
-    def list_topic_rows(self, user_id: int) -> list[tuple[int, str]]:
+    def list_include_topics(self, user_id: int) -> list[str]:
+        return self.list_topics(user_id, kind="include")
+
+    def list_exclude_topics(self, user_id: int) -> list[str]:
+        return self.list_topics(user_id, kind="exclude")
+
+    def list_topic_rows(
+        self, user_id: int, kind: str | None = None
+    ) -> list[tuple[int, str, str]]:
         with self.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT id, topic FROM topics
-                WHERE user_id = ?
-                ORDER BY topic
-                """,
-                (user_id,),
-            ).fetchall()
-        return [(int(row["id"]), str(row["topic"])) for row in rows]
+            if kind in {"include", "exclude"}:
+                rows = conn.execute(
+                    """
+                    SELECT id, topic, kind FROM topics
+                    WHERE user_id = ? AND kind = ?
+                    ORDER BY topic
+                    """,
+                    (user_id, kind),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, topic, kind FROM topics
+                    WHERE user_id = ?
+                    ORDER BY kind DESC, topic
+                    """,
+                    (user_id,),
+                ).fetchall()
+        return [
+            (int(row["id"]), str(row["topic"]), str(row["kind"] or "include"))
+            for row in rows
+        ]
 
     @staticmethod
     def _row_to_source(row: sqlite3.Row) -> Source:
