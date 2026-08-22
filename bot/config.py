@@ -151,6 +151,11 @@ class Settings:
     weekly_top_limit: int
     weekly_digest_hour_utc: int
     weekly_digest_weekday: int
+    ai_summary_enabled: bool
+    groq_api_key: str | None
+    ai_model: str
+    ai_max_concurrent: int
+    ai_timeout_seconds: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -188,4 +193,18 @@ class Settings:
             weekly_digest_weekday=max(
                 0, min(6, int(_env("WEEKLY_DIGEST_WEEKDAY", "0") or "0"))
             ),
+            ai_summary_enabled=_env("AI_SUMMARY_ENABLED", "1") not in {
+                "0",
+                "false",
+                "False",
+                "no",
+                "off",
+            },
+            groq_api_key=_env("GROQ_API_KEY"),
+            ai_model=_env("AI_MODEL", "llama-3.3-70b-versatile")
+            or "llama-3.3-70b-versatile",
+            ai_max_concurrent=max(
+                1, min(10, int(_env("AI_MAX_CONCURRENT", "4") or "4"))
+            ),
+            ai_timeout_seconds=float(_env("AI_TIMEOUT_SECONDS", "15") or "15"),
         )

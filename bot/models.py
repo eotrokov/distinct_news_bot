@@ -26,6 +26,7 @@ class NewsItem:
     source_type: SourceType
     source_name: str
     summary: str | None = None
+    body: str | None = None
     external_id: str = ""
     urls: list[str] = field(default_factory=list)
     reactions: int = 0

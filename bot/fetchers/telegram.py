@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup, Tag
 
 from bot.fetchers.base import BaseFetcher, FetchError
 from bot.models import NewsItem, Source
-from bot.summarize import clean_and_summarize, first_meaningful_line
+from bot.summarize import clean_and_summarize, clean_text, first_meaningful_line
 
 _HANDLE_RE = re.compile(r"^(?:https?://)?(?:t\.me|telegram\.me)/(?:s/)?@?([A-Za-z0-9_]{4,})$")
 _COUNT_RE = re.compile(r"([\d.,]+)\s*([KkMmBb])?")
@@ -164,6 +164,7 @@ class TelegramChannelFetcher(BaseFetcher):
                     msg_id = int(raw_id)
                     oldest_id = msg_id if oldest_id is None else min(oldest_id, msg_id)
 
+            body = clean_text(text)[:2000] or None
             items.append(
                 NewsItem(
                     title=title,
@@ -175,6 +176,7 @@ class TelegramChannelFetcher(BaseFetcher):
                         text, title=title, max_sentences=5, max_len=900
                     )
                     or None,
+                    body=body,
                     external_id=data_post or post_url or title,
                     reactions=_extract_reactions(widget),
                     views=_extract_views(widget),

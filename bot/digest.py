@@ -5,6 +5,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from bot.ai_summarize import (
+    ai_summary_active,
+    enrich_items,
+    item_key,
+    merge_items_into_analysis,
+)
 from bot.analyzer import NewsAnalyzer, item_urls
 from bot.config import Settings
 from bot.db import Database
@@ -204,14 +210,18 @@ class DigestService:
             else self.settings.digest_limit
         )
         limited = flat[:limit]
+        if ai_summary_active(self.settings):
+            limited = await enrich_items(limited, self.settings)
+            analysis = merge_items_into_analysis(analysis, limited)
+
         if len(flat) > len(limited):
-            keep = set(id(x) for x in limited)
+            keep_keys = {item_key(it) for it in limited}
             analysis = {
                 **analysis,
                 "categories": {
-                    name: [it for it in cat if id(it) in keep]
+                    name: [it for it in cat if item_key(it) in keep_keys]
                     for name, cat in analysis["categories"].items()
-                    if any(id(it) in keep for it in cat)
+                    if any(item_key(it) in keep_keys for it in cat)
                 },
                 "stats": {
                     **analysis["stats"],
