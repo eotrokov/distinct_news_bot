@@ -4,7 +4,7 @@ Telegram-бот для **SEO-дайджеста из публичных Telegram
 собирает посты, убирает рекламу и дубли, раскладывает по темам и отдаёт подробную выжимку.
 
 - Период: `/news` (по умолчанию 3 дня) или `/news 5`
-- Подробная выжимка: несколько предложений на новость (rule-based + опционально Groq AI)
+- Подробная выжимка: несколько предложений на новость (rule-based + опционально Gemini AI)
 - Топ недели: `/weekly` — главные посты за 7 дней по реакциям (авто-рассылка раз в неделю)
 - Массовое добавление: `/add @a @b @c` (запятые / новые строки)
 - Пагинация: больше 10 пунктов — стрелки ◀ ▶ в одном сообщении
@@ -53,17 +53,20 @@ export DEPLOY_USER=root
 ./deploy/deploy.sh
 ```
 
-## AI-сводки (Groq, бесплатно)
+## AI-сводки (Google Gemini, бесплатно)
 
-1. Зарегистрируйтесь на [console.groq.com](https://console.groq.com) и создайте API key.
+1. Получите API key на [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 2. Добавьте в `.env`:
 
    ```
    AI_SUMMARY_ENABLED=1
-   GROQ_API_KEY=gsk_...
+   AI_PROVIDER=gemini
+   GEMINI_API_KEY=...
    ```
 
 3. Без ключа бот работает как раньше — rule-based сводка остаётся fallback.
+
+Альтернатива: `AI_PROVIDER=groq` + `GROQ_API_KEY` (если Groq доступен у вас).
 
 AI вызывается только для финальных пунктов дайджеста (до `DIGEST_LIMIT`), не для каждого сырого поста.
 
@@ -84,8 +87,10 @@ AI вызывается только для финальных пунктов д
 | `WEEKLY_DIGEST_HOUR_UTC` | час авто-топа (UTC) | 9 |
 | `WEEKLY_DIGEST_WEEKDAY` | день недели авто-топа (0=пн … 6=вс) | 0 |
 | `AI_SUMMARY_ENABLED` | включить AI-сводку (0/1) | 1 |
-| `GROQ_API_KEY` | ключ Groq API | — |
-| `AI_MODEL` | модель Groq | `llama-3.3-70b-versatile` |
+| `AI_PROVIDER` | провайдер AI (`gemini` / `groq`) | `gemini` |
+| `GEMINI_API_KEY` | ключ Google Gemini | — |
+| `GROQ_API_KEY` | ключ Groq (если `AI_PROVIDER=groq`) | — |
+| `AI_MODEL` | модель | `gemini-2.0-flash` |
 | `AI_MAX_CONCURRENT` | параллельных AI-запросов | 4 |
 | `AI_TIMEOUT_SECONDS` | таймаут AI-запроса | 15 |
 | `LOG_LEVEL` | `INFO` / `DEBUG` | `INFO` |

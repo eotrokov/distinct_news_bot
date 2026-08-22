@@ -24,8 +24,9 @@ def _settings(**overrides) -> Settings:
         weekly_digest_hour_utc=9,
         weekly_digest_weekday=0,
         ai_summary_enabled=False,
-        groq_api_key=None,
-        ai_model="llama-3.3-70b-versatile",
+        ai_provider="gemini",
+        ai_api_key=None,
+        ai_model="gemini-2.0-flash",
         ai_max_concurrent=4,
         ai_timeout_seconds=15.0,
     )

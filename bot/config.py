@@ -132,6 +132,22 @@ def _env(name: str, default: str | None = None) -> str | None:
     return value.strip()
 
 
+def _resolve_ai_api_key() -> str | None:
+    provider = (_env("AI_PROVIDER", "gemini") or "gemini").lower()
+    if provider == "groq":
+        return _env("GROQ_API_KEY")
+    return _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
+
+
+def _resolve_ai_model() -> str:
+    provider = (_env("AI_PROVIDER", "gemini") or "gemini").lower()
+    if _env("AI_MODEL"):
+        return _env("AI_MODEL") or ""
+    if provider == "groq":
+        return "llama-3.3-70b-versatile"
+    return "gemini-2.0-flash"
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
@@ -152,7 +168,8 @@ class Settings:
     weekly_digest_hour_utc: int
     weekly_digest_weekday: int
     ai_summary_enabled: bool
-    groq_api_key: str | None
+    ai_provider: str
+    ai_api_key: str | None
     ai_model: str
     ai_max_concurrent: int
     ai_timeout_seconds: float
@@ -200,9 +217,11 @@ class Settings:
                 "no",
                 "off",
             },
-            groq_api_key=_env("GROQ_API_KEY"),
-            ai_model=_env("AI_MODEL", "llama-3.3-70b-versatile")
-            or "llama-3.3-70b-versatile",
+            ai_provider=(
+                (_env("AI_PROVIDER", "gemini") or "gemini").lower()
+            ),
+            ai_api_key=_resolve_ai_api_key(),
+            ai_model=_resolve_ai_model(),
             ai_max_concurrent=max(
                 1, min(10, int(_env("AI_MAX_CONCURRENT", "4") or "4"))
             ),
