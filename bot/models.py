@@ -19,6 +19,16 @@ class Source:
 
 
 @dataclass(frozen=True)
+class Feedback:
+    id: int
+    user_id: int
+    username: str
+    text: str
+    created_at: datetime
+    status: str  # "new", "reviewed", "done"
+
+
+@dataclass(frozen=True)
 class NewsItem:
     title: str
     url: str

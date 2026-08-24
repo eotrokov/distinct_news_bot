@@ -57,6 +57,7 @@ HELP_TEXT = """\
 /topics — список тем
 /topic clear — сбросить все темы
 /news — сводка с прошлого запроса
+/feedback — отзыв или предложение
 /reset — сбросить точку прошлого запроса
 /cancel — отменить ввод
 /help — эта справка
@@ -344,6 +345,31 @@ async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    args = context.args or []
+    if args:
+        db: Database = context.application.bot_data["db"]
+        username = update.effective_user.username or ""
+        from bot.menu import _notify_admins_about_feedback
+
+        fb = db.add_feedback(update.effective_user.id, username, " ".join(args))
+        await update.message.reply_text(
+            "Спасибо! Ваш отзыв отправлен администраторам.",
+            reply_markup=main_reply_keyboard(),
+        )
+        await _notify_admins_about_feedback(context, fb)
+    else:
+        set_awaiting(context, {"kind": "feedback"})
+        await update.message.reply_text(
+            "Напишите ваш отзыв, предложение или фичреквест.\n"
+            "Текст будет отправлен администраторам.\n\n"
+            "/cancel — отмена",
+            reply_markup=main_reply_keyboard(),
+        )
+
+
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Route plain text to reply-buttons or awaiting input."""
     if not update.message or not update.message.text:
@@ -375,6 +401,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("news", news))
     app.add_handler(CommandHandler("digest", news))
     app.add_handler(CommandHandler("reset", reset_cursor))
+    app.add_handler(CommandHandler("feedback", feedback_cmd))
     app.add_handler(CallbackQueryHandler(on_callback, pattern=r"^m:"))
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_router)

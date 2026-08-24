@@ -2,45 +2,50 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
-from bot.models import Source
+from bot.models import Feedback, Source
 
-# Reply keyboard labels (must match handlers)
 BTN_NEWS = "Сводка"
 BTN_SOURCES = "Источники"
 BTN_TOPICS = "Темы"
 BTN_MENU = "Меню"
 BTN_HELP = "Помощь"
 BTN_RESET = "Сброс курсора"
+BTN_FEEDBACK = "Обратная связь"
 
-REPLY_BUTTONS = {BTN_NEWS, BTN_SOURCES, BTN_TOPICS, BTN_MENU, BTN_HELP, BTN_RESET}
+REPLY_BUTTONS = {BTN_NEWS, BTN_SOURCES, BTN_TOPICS, BTN_MENU, BTN_HELP, BTN_RESET, BTN_FEEDBACK}
 
 
 def main_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [BTN_NEWS, BTN_SOURCES],
-            [BTN_TOPICS, BTN_MENU],
-            [BTN_HELP, BTN_RESET],
+            [BTN_TOPICS, BTN_FEEDBACK],
+            [BTN_MENU, BTN_HELP],
+            [BTN_RESET],
         ],
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
-def main_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
+def main_inline_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton("Сводка новостей", callback_data="m:news")],
         [
-            [InlineKeyboardButton("Сводка новостей", callback_data="m:news")],
-            [
-                InlineKeyboardButton("Источники", callback_data="m:sources"),
-                InlineKeyboardButton("Темы", callback_data="m:topics"),
-            ],
-            [
-                InlineKeyboardButton("Сброс курсора", callback_data="m:reset"),
-                InlineKeyboardButton("Помощь", callback_data="m:help"),
-            ],
-        ]
-    )
+            InlineKeyboardButton("Источники", callback_data="m:sources"),
+            InlineKeyboardButton("Темы", callback_data="m:topics"),
+        ],
+        [InlineKeyboardButton("Обратная связь", callback_data="m:feedback")],
+        [
+            InlineKeyboardButton("Сброс курсора", callback_data="m:reset"),
+            InlineKeyboardButton("Помощь", callback_data="m:help"),
+        ],
+    ]
+    if is_admin:
+        rows.append(
+            [InlineKeyboardButton("⚙ Админ-панель", callback_data="m:admin")]
+        )
+    return InlineKeyboardMarkup(rows)
 
 
 def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
@@ -95,6 +100,54 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("« Меню", callback_data="m:home")]]
     )
+
+
+def admin_panel_keyboard(new_count: int = 0) -> InlineKeyboardMarkup:
+    new_label = f"Новые ({new_count})" if new_count else "Новые"
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(new_label, callback_data="m:adm_list:new")],
+            [InlineKeyboardButton("Рассмотренные", callback_data="m:adm_list:reviewed")],
+            [InlineKeyboardButton("Выполненные", callback_data="m:adm_list:done")],
+            [InlineKeyboardButton("Все заявки", callback_data="m:adm_list:all")],
+            [InlineKeyboardButton("« Меню", callback_data="m:home")],
+        ]
+    )
+
+
+def feedback_list_keyboard(
+    items: list[Feedback], status_filter: str
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for fb in items[:20]:
+        label = f"#{fb.id} [{fb.status}] {fb.text[:40]}"
+        rows.append(
+            [InlineKeyboardButton(label, callback_data=f"m:adm_view:{fb.id}")]
+        )
+    rows.append(
+        [InlineKeyboardButton("« Админ-панель", callback_data="m:admin")]
+    )
+    return InlineKeyboardMarkup(rows)
+
+
+def feedback_detail_keyboard(fb: Feedback) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if fb.status != "reviewed":
+        rows.append(
+            [InlineKeyboardButton("Отметить: рассмотрено", callback_data=f"m:adm_status:{fb.id}:reviewed")]
+        )
+    if fb.status != "done":
+        rows.append(
+            [InlineKeyboardButton("Отметить: выполнено", callback_data=f"m:adm_status:{fb.id}:done")]
+        )
+    if fb.status != "new":
+        rows.append(
+            [InlineKeyboardButton("Вернуть в новые", callback_data=f"m:adm_status:{fb.id}:new")]
+        )
+    rows.append(
+        [InlineKeyboardButton("« К списку", callback_data="m:adm_list:all")]
+    )
+    return InlineKeyboardMarkup(rows)
 
 
 SOURCE_PROMPTS = {
