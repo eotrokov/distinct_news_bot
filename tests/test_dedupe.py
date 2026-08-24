@@ -77,3 +77,23 @@ def test_format_digest_excerpt_and_reactions():
     assert "https://example.com/post/1" in text
     assert "❤️ 42" in text
     assert "👁 1200" in text
+
+
+def test_format_digest_paginates_by_page_size():
+    items = [
+        NewsItem(
+            title=f"News {i}",
+            url=f"https://example.com/{i}",
+            published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            source_type="telegram",
+            source_name="src",
+            summary=f"Summary body for news item number {i} with enough words here.",
+            reactions=i,
+        )
+        for i in range(25)
+    ]
+    pages = format_digest(items, [], days=3, page_size=10)
+    assert len(pages) == 3
+    assert "Страница 1/3" in pages[0]
+    assert "Страница 2/3" in pages[1]
+    assert "Страница 3/3" in pages[2]

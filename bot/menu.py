@@ -18,6 +18,7 @@ from bot.keyboards import (
     REPLY_BUTTONS,
     SOURCE_PROMPTS,
     back_home_keyboard,
+    digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
     source_type_keyboard,
@@ -29,6 +30,7 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 AWAITING_KEY = "awaiting"
+DIGEST_SESSIONS_KEY = "digest_sessions"
 
 MENU_TEXT = (
     "Управление ботом кнопками.\n"
@@ -47,6 +49,24 @@ def set_awaiting(context: ContextTypes.DEFAULT_TYPE, payload: dict) -> None:
 def get_awaiting(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
     value = context.user_data.get(AWAITING_KEY)
     return value if isinstance(value, dict) else None
+
+
+def _store_digest_pages(
+    context: ContextTypes.DEFAULT_TYPE, user_id: int, pages: list[str]
+) -> None:
+    sessions = context.application.bot_data.setdefault(DIGEST_SESSIONS_KEY, {})
+    sessions[user_id] = {"pages": pages, "page": 0}
+
+
+def _get_digest_pages(
+    context: ContextTypes.DEFAULT_TYPE, user_id: int
+) -> list[str] | None:
+    sessions = context.application.bot_data.get(DIGEST_SESSIONS_KEY) or {}
+    session = sessions.get(user_id)
+    if not isinstance(session, dict):
+        return None
+    pages = session.get("pages")
+    return pages if isinstance(pages, list) and pages else None
 
 
 async def show_main_menu(
@@ -93,20 +113,18 @@ async def send_digest_to_chat(
     pages = digest.format_digest(
         analysis, days_used, errors=errors, topics=topics
     )
+    _store_digest_pages(context, user_id, pages)
     digest.mark_digest_delivered(user_id, items)
+    markup = (
+        digest_page_keyboard(0, len(pages))
+        if len(pages) > 1
+        else back_home_keyboard()
+    )
     await status.edit_text(
         pages[0],
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
-    )
-    for page in pages[1:]:
-        await update.effective_message.reply_text(
-            page,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-    await update.effective_message.reply_text(
-        "Готово.", reply_markup=back_home_keyboard()
+        reply_markup=markup,
     )
 
 
@@ -178,11 +196,45 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     query = update.callback_query
     if not query or not update.effective_user:
         return
-    await query.answer()
     data = query.data or ""
     db: Database = context.application.bot_data["db"]
     user_id = update.effective_user.id
     db.ensure_user(user_id)
+
+    if data == "m:dg:noop":
+        await query.answer()
+        return
+
+    if data.startswith("m:dg:"):
+        try:
+            page = int(data.split(":")[2])
+        except (IndexError, ValueError):
+            await query.answer()
+            return
+        pages = _get_digest_pages(context, user_id)
+        if not pages:
+            await query.answer(
+                "Сводка устарела — нажмите «Сводка» ещё раз.",
+                show_alert=True,
+            )
+            return
+        await query.answer()
+        page = max(0, min(page, len(pages) - 1))
+        sessions = context.application.bot_data.get(DIGEST_SESSIONS_KEY) or {}
+        if user_id in sessions:
+            sessions[user_id]["page"] = page
+        try:
+            await query.edit_message_text(
+                pages[page],
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+                reply_markup=digest_page_keyboard(page, len(pages)),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to paginate digest for user %s", user_id)
+        return
+
+    await query.answer()
 
     if data == "m:home":
         await show_main_menu(update, context, edit=True)
