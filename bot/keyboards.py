@@ -65,10 +65,6 @@ def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
 def source_type_keyboard() -> InlineKeyboardMarkup:
     types = [
         ("Telegram", "telegram"),
-        ("РИА", "ria"),
-        ("RSS", "rss"),
-        ("Facebook", "facebook"),
-        ("Twitter/X", "twitter"),
     ]
     rows = [
         [InlineKeyboardButton(label, callback_data=f"m:src_type:{stype}")]
@@ -158,8 +154,4 @@ SOURCE_PROMPTS = {
         "• ссылку папки https://t.me/addlist/… "
         "(затем список @каналов из папки)"
     ),
-    "ria": "Пришлите ленту РИА: main / politics / world / … или URL RSS",
-    "rss": "Пришлите URL RSS/Atom ленты",
-    "facebook": "Пришлите имя страницы Facebook, URL страницы или URL RSS",
-    "twitter": "Пришлите @user, URL профиля X/Twitter или URL RSS",
 }

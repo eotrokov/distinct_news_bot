@@ -64,18 +64,10 @@ HELP_TEXT = """\
 
 Если темы заданы, в сводку попадают только новости, где встречается хотя бы одна тема (в заголовке или тексте). Без тем — все новости.
 
-Типы источников:
-• telegram — публичный канал (@channel) или папка addlist
-• ria — лента РИА (main, politics, world, …) или URL RSS
-• rss — любой RSS/Atom URL
-• facebook — страница (нужен RSSHUB_BASE_URL) или URL RSS
-• twitter — аккаунт X/Twitter (нужен RSSHUB_BASE_URL) или URL RSS
-
 Примеры:
 /add telegram bbcnews
 /add telegram @ch1 @ch2 https://t.me/ch3
 /addlist https://t.me/addlist/_0flf9ViWOo0NjNi
-/add ria main
 /topic add seo
 /news
 """
