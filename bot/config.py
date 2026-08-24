@@ -20,12 +20,20 @@ class Settings:
     fetch_timeout_seconds: float
     rsshub_base_url: str | None
     default_lookback_hours: int
+    admin_ids: tuple[int, ...]
 
     @classmethod
     def from_env(cls) -> "Settings":
         token = _env("TELEGRAM_BOT_TOKEN")
         if not token:
             raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
+
+        raw_admins = _env("ADMIN_IDS", "")
+        admin_ids: tuple[int, ...] = ()
+        if raw_admins:
+            admin_ids = tuple(
+                int(x.strip()) for x in raw_admins.split(",") if x.strip().lstrip("-").isdigit()
+            )
 
         return cls(
             telegram_bot_token=token,
@@ -37,4 +45,5 @@ class Settings:
             default_lookback_hours=max(
                 1, int(_env("DEFAULT_LOOKBACK_HOURS", "24") or "24")
             ),
+            admin_ids=admin_ids,
         )

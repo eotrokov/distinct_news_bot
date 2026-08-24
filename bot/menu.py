@@ -7,7 +7,9 @@ from telegram.ext import ContextTypes
 
 from bot.db import Database
 from bot.digest import DigestService, format_digest, parse_add_args
+from bot.config import Settings
 from bot.keyboards import (
+    BTN_FEEDBACK,
     BTN_HELP,
     BTN_MENU,
     BTN_NEWS,
@@ -16,7 +18,10 @@ from bot.keyboards import (
     BTN_TOPICS,
     REPLY_BUTTONS,
     SOURCE_PROMPTS,
+    admin_panel_keyboard,
     back_home_keyboard,
+    feedback_detail_keyboard,
+    feedback_list_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
     source_type_keyboard,
@@ -33,6 +38,11 @@ MENU_TEXT = (
     "Управление ботом кнопками.\n"
     "Снизу — быстрые кнопки, здесь — подробное меню."
 )
+
+
+def _is_admin(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    settings: Settings = context.application.bot_data["settings"]
+    return user_id in settings.admin_ids
 
 
 def clear_awaiting(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -56,7 +66,8 @@ async def show_main_menu(
 ) -> None:
     clear_awaiting(context)
     text = MENU_TEXT
-    markup = main_inline_keyboard()
+    user_id = update.effective_user.id if update.effective_user else 0
+    markup = main_inline_keyboard(is_admin=_is_admin(context, user_id))
     if edit and update.callback_query and update.callback_query.message:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
         return
@@ -252,6 +263,94 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
+    if data == "m:feedback":
+        set_awaiting(context, {"kind": "feedback"})
+        await query.edit_message_text(
+            "Напишите ваш отзыв, предложение или фичреквест.\n"
+            "Текст будет отправлен администраторам.\n\n"
+            "/cancel — отмена",
+            reply_markup=back_home_keyboard(),
+        )
+        return
+
+    if data == "m:admin":
+        if not _is_admin(context, user_id):
+            await query.answer("Нет доступа", show_alert=True)
+            return
+        new_count = db.count_feedback("new")
+        await query.edit_message_text(
+            f"Админ-панель\nНовых заявок: {new_count}",
+            reply_markup=admin_panel_keyboard(new_count),
+        )
+        return
+
+    if data.startswith("m:adm_list:"):
+        if not _is_admin(context, user_id):
+            await query.answer("Нет доступа", show_alert=True)
+            return
+        status_filter = data.split(":")[2]
+        items = db.list_feedback(
+            status=status_filter if status_filter != "all" else None
+        )
+        if not items:
+            await query.edit_message_text(
+                "Заявок нет.",
+                reply_markup=admin_panel_keyboard(db.count_feedback("new")),
+            )
+            return
+        await query.edit_message_text(
+            f"Заявки ({status_filter}):",
+            reply_markup=feedback_list_keyboard(items, status_filter),
+        )
+        return
+
+    if data.startswith("m:adm_view:"):
+        if not _is_admin(context, user_id):
+            await query.answer("Нет доступа", show_alert=True)
+            return
+        fb_id = int(data.split(":")[2])
+        fb = db.get_feedback(fb_id)
+        if not fb:
+            await query.answer("Заявка не найдена", show_alert=True)
+            return
+        user_label = f"@{fb.username}" if fb.username else str(fb.user_id)
+        text = (
+            f"Заявка #{fb.id}\n"
+            f"От: {user_label} (id: {fb.user_id})\n"
+            f"Статус: {fb.status}\n"
+            f"Дата: {fb.created_at:%Y-%m-%d %H:%M}\n\n"
+            f"{fb.text}"
+        )
+        await query.edit_message_text(
+            text, reply_markup=feedback_detail_keyboard(fb)
+        )
+        return
+
+    if data.startswith("m:adm_status:"):
+        if not _is_admin(context, user_id):
+            await query.answer("Нет доступа", show_alert=True)
+            return
+        parts = data.split(":")
+        fb_id = int(parts[2])
+        new_status = parts[3]
+        db.update_feedback_status(fb_id, new_status)
+        fb = db.get_feedback(fb_id)
+        if not fb:
+            await query.answer("Заявка не найдена", show_alert=True)
+            return
+        user_label = f"@{fb.username}" if fb.username else str(fb.user_id)
+        text = (
+            f"Заявка #{fb.id}\n"
+            f"От: {user_label} (id: {fb.user_id})\n"
+            f"Статус: {fb.status}\n"
+            f"Дата: {fb.created_at:%Y-%m-%d %H:%M}\n\n"
+            f"{fb.text}"
+        )
+        await query.edit_message_text(
+            text, reply_markup=feedback_detail_keyboard(fb)
+        )
+        return
+
 
 async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_user or not update.message.text:
@@ -277,6 +376,14 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         from bot.handlers import HELP_TEXT
 
         await update.message.reply_text(HELP_TEXT, reply_markup=main_reply_keyboard())
+    elif text == BTN_FEEDBACK:
+        set_awaiting(context, {"kind": "feedback"})
+        await update.message.reply_text(
+            "Напишите ваш отзыв, предложение или фичреквест.\n"
+            "Текст будет отправлен администраторам.\n\n"
+            "/cancel — отмена",
+            reply_markup=main_reply_keyboard(),
+        )
     elif text == BTN_RESET:
         db.reset_last_digest_at(update.effective_user.id)
         await update.message.reply_text(
@@ -303,6 +410,19 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     kind = awaiting.get("kind")
 
     try:
+        if kind == "feedback":
+            username = ""
+            if update.effective_user:
+                username = update.effective_user.username or ""
+            fb = db.add_feedback(user_id, username, text)
+            clear_awaiting(context)
+            await update.message.reply_text(
+                "Спасибо! Ваш отзыв отправлен администраторам.",
+                reply_markup=main_reply_keyboard(),
+            )
+            await _notify_admins_about_feedback(context, fb)
+            return
+
         if kind == "addlist_channels":
             from bot.sources_ops import add_telegram_from_text, format_add_report
 
@@ -407,3 +527,24 @@ async def cancel_awaiting(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup=main_reply_keyboard(),
         )
         await show_main_menu(update, context)
+
+
+async def _notify_admins_about_feedback(
+    context: ContextTypes.DEFAULT_TYPE,
+    fb: "Feedback",
+) -> None:
+    from bot.models import Feedback as _Feedback  # noqa: F811
+
+    settings: Settings = context.application.bot_data["settings"]
+    user_label = f"@{fb.username}" if fb.username else str(fb.user_id)
+    text = (
+        f"Новый фидбек #{fb.id}\n"
+        f"От: {user_label} (id: {fb.user_id})\n"
+        f"Дата: {fb.created_at:%Y-%m-%d %H:%M}\n\n"
+        f"{fb.text}"
+    )
+    for admin_id in settings.admin_ids:
+        try:
+            await context.bot.send_message(chat_id=admin_id, text=text)
+        except Exception:
+            logger.warning("Failed to notify admin %s", admin_id)
