@@ -21,6 +21,7 @@ def main_reply_keyboard() -> ReplyKeyboardMarkup:
             [BTN_NEWS, BTN_SOURCES],
             [BTN_TOPICS, BTN_FEEDBACK],
             [BTN_MENU, BTN_HELP],
+            [BTN_RESET],
         ],
         resize_keyboard=True,
         is_persistent=True,
