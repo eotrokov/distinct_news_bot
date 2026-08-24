@@ -29,9 +29,9 @@ Telegram-бот, который собирает сводку новостей �
 
 Если темы заданы, в `/news` попадают только материалы, где встречается **хотя бы одна** тема (в заголовке или тексте). Без тем — все новости.
 
-- `/topic add seo` — добавить тему (`/topic seo` тоже работает)
+- `/topic add ai` — добавить тему (`/topic ai` тоже работает)
 - `/topic add marketing, ai` — несколько тем сразу
-- `/topic del seo` — удалить
+- `/topic del ai` — удалить
 - `/topics` — список
 - `/topic clear` — сбросить все фильтры
 
@@ -50,7 +50,7 @@ Telegram-бот, который собирает сводку новостей �
 /add telegram @ch1 @ch2 https://t.me/ch3
 /addlist https://t.me/addlist/_0flf9ViWOo0NjNi
 /add ria main
-/topic add seo
+/topic add ai
 /news
 ```
 

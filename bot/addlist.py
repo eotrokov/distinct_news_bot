@@ -89,7 +89,7 @@ async def fetch_addlist_title(url_or_slug: str, timeout: float = 20.0) -> str:
     if not match:
         return f"addlist:{slug}"
     title = match.group(1).strip()
-    # "Telegram Chats: SEO каналы" → "SEO каналы"
+    # "Telegram Chats: Маркетинг каналы" -> "Маркетинг каналы"
     prefix = "Telegram Chats:"
     if title.startswith(prefix):
         title = title[len(prefix) :].strip()

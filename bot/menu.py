@@ -112,7 +112,7 @@ def topics_text(db: Database, user_id: int) -> str:
     if not rows:
         return (
             "Темы не заданы — сводка без фильтра.\n"
-            "Нажмите «Добавить тему» или /topic add seo"
+            "Нажмите «Добавить тему» или /topic add ai"
         )
     lines = ["Активные темы (OR-фильтр). Нажмите тему, чтобы удалить:"]
     for _, topic in rows:
@@ -227,7 +227,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         set_awaiting(context, {"kind": "topic"})
         await query.edit_message_text(
             "Пришлите тему или несколько через запятую/пробел.\n"
-            "Пример: seo\nПример: marketing ai\n\n/cancel — отмена.",
+            "Пример: ai\nПример: marketing finance\n\n/cancel — отмена.",
             reply_markup=back_home_keyboard(),
         )
         return

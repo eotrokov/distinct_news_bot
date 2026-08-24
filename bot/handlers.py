@@ -75,7 +75,7 @@ HELP_TEXT = """\
 /add telegram @ch1 @ch2 https://t.me/ch3
 /addlist https://t.me/addlist/_0flf9ViWOo0NjNi
 /add ria main
-/topic add seo
+/topic add ai
 /news
 """
 

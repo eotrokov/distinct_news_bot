@@ -41,11 +41,11 @@ def test_add_telegram_channels_dedupes(tmp_path):
 
 def test_format_add_report():
     text = format_add_report(
-        folder_title="SEO каналы",
+        folder_title="Маркетинг каналы",
         added=["@a", "@b"],
         skipped=["@c"],
     )
-    assert "SEO каналы" in text
+    assert "Маркетинг каналы" in text
     assert "Добавлено (2)" in text
     assert "Уже были (1)" in text
 
@@ -55,7 +55,7 @@ async def test_fetch_addlist_title_parses_og(monkeypatch: pytest.MonkeyPatch):
     from bot import addlist as addlist_mod
 
     class FakeResp:
-        text = '<meta property="og:title" content="Telegram Chats: SEO каналы">'
+        text = '<meta property="og:title" content="Telegram Chats: Маркетинг каналы">'
 
         def raise_for_status(self) -> None:
             return None
@@ -78,4 +78,4 @@ async def test_fetch_addlist_title_parses_og(monkeypatch: pytest.MonkeyPatch):
     title = await addlist_mod.fetch_addlist_title(
         "https://t.me/addlist/_0flf9ViWOo0NjNi"
     )
-    assert title == "SEO каналы"
+    assert title == "Маркетинг каналы"

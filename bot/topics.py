@@ -19,13 +19,13 @@ def parse_topic_args(args: list[str]) -> list[str]:
     """Parse one or more topics from command args.
 
     Examples:
-      seo
-      seo marketing
-      seo,marketing
+      ai
+      ai marketing
+      ai,marketing
       "search engine"
     """
     if not args:
-        raise ValueError("Укажите тему, например: /topic add seo")
+        raise ValueError("Укажите тему, например: /topic add ai")
 
     joined = " ".join(args).strip()
     # Normalize commas to spaces, then shlex-split so quotes keep phrases.
@@ -37,7 +37,7 @@ def parse_topic_args(args: list[str]) -> list[str]:
 
     parts = [normalize_topic(t) for t in tokens if t.strip()]
     if not parts:
-        raise ValueError("Укажите тему, например: /topic add seo")
+        raise ValueError("Укажите тему, например: /topic add ai")
 
     seen: set[str] = set()
     unique: list[str] = []

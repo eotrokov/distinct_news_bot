@@ -36,13 +36,13 @@ def test_db_sources_and_seen(tmp_path):
 def test_db_topics(tmp_path):
     db = Database(str(tmp_path / "topics.sqlite3"))
     user_id = 7
-    db.add_topic(user_id, "seo")
+    db.add_topic(user_id, "ai")
     db.add_topic(user_id, "marketing")
-    assert db.list_topics(user_id) == ["marketing", "seo"]
+    assert db.list_topics(user_id) == ["ai", "marketing"]
     rows = db.list_topic_rows(user_id)
     assert len(rows) == 2
     removed = db.remove_topic_by_id(user_id, rows[0][0])
     assert removed == rows[0][1]
-    assert db.remove_topic(user_id, "seo") in {True, False}
+    assert db.remove_topic(user_id, "ai") in {True, False}
     assert db.clear_topics(user_id) >= 0
     assert db.list_topics(user_id) == []

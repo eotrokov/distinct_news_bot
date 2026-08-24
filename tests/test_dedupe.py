@@ -52,5 +52,5 @@ def test_format_digest_empty():
 
 
 def test_format_digest_with_topics():
-    chunks = format_digest([], [], ["seo"])
-    assert "seo" in chunks[0]
+    chunks = format_digest([], [], ["ai"])
+    assert "ai" in chunks[0]
