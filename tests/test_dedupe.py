@@ -46,11 +46,34 @@ def test_parse_add_args():
 
 
 def test_format_digest_empty():
-    chunks = format_digest([], ["timeout"])
-    assert "Новых новостей" in chunks[0]
+    chunks = format_digest([], ["timeout"], days=3)
+    assert "3 дня" in chunks[0]
     assert "timeout" in chunks[0]
 
 
 def test_format_digest_with_topics():
-    chunks = format_digest([], [], ["ai"])
+    chunks = format_digest([], [], ["ai"], days=3)
     assert "ai" in chunks[0]
+
+
+def test_format_digest_excerpt_and_reactions():
+    items = [
+        NewsItem(
+            title="Заголовок новости",
+            url="https://example.com/post/1",
+            published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            source_type="telegram",
+            source_name="РИА",
+            summary="Длинный текст поста про событие и детали для читателя ленты.",
+            reactions=42,
+            views=1200,
+        )
+    ]
+    chunks = format_digest(items, [], days=7)
+    text = chunks[0]
+    assert "Главные новости за 7 дней (по реакциям)" in text
+    assert "<b>" in text
+    assert "источник" in text
+    assert "https://example.com/post/1" in text
+    assert "❤️ 42" in text
+    assert "👁 1200" in text

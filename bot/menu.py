@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from bot.db import Database
-from bot.digest import DigestService, format_digest, parse_add_args
+from bot.digest import DigestService, parse_add_args
 from bot.keyboards import (
     BTN_HELP,
     BTN_MENU,
@@ -71,24 +72,39 @@ async def show_main_menu(
 async def send_digest_to_chat(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
+    days: int | None = None,
 ) -> None:
     if not update.effective_user or not update.effective_message:
         return
     digest: DigestService = context.application.bot_data["digest"]
     user_id = update.effective_user.id
-    status = await update.effective_message.reply_text("Собираю сводку…")
+    status = await update.effective_message.reply_text(
+        "Собираю сводку по реакциям…"
+    )
     try:
-        items, errors, topics = await digest.collect_for_user(user_id)
+        items, errors, topics, days_used, analysis = await digest.collect_for_user(
+            user_id, days=days
+        )
     except Exception:  # noqa: BLE001
         logger.exception("Digest failed for user %s", user_id)
         await status.edit_text("Не удалось собрать сводку. Попробуйте позже.")
         return
 
-    chunks = format_digest(items, errors, topics)
-    await status.edit_text(chunks[0])
-    for chunk in chunks[1:]:
-        await update.effective_message.reply_text(chunk)
+    pages = digest.format_digest(
+        analysis, days_used, errors=errors, topics=topics
+    )
     digest.mark_digest_delivered(user_id, items)
+    await status.edit_text(
+        pages[0],
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
+    for page in pages[1:]:
+        await update.effective_message.reply_text(
+            page,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
     await update.effective_message.reply_text(
         "Готово.", reply_markup=back_home_keyboard()
     )

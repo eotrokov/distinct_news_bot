@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
@@ -26,4 +26,8 @@ class NewsItem:
     source_type: SourceType
     source_name: str
     summary: str = ""
+    body: str = ""
     external_id: str = ""
+    urls: list[str] = field(default_factory=list)
+    reactions: int = 0
+    views: int = 0
