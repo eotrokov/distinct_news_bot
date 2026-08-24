@@ -97,6 +97,22 @@ def back_home_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def digest_page_keyboard(page: int, total: int) -> InlineKeyboardMarkup:
+    """Inline pager for digest pages (0-based page index)."""
+    total = max(1, total)
+    page = max(0, min(page, total - 1))
+    row: list[InlineKeyboardButton] = []
+    if page > 0:
+        row.append(InlineKeyboardButton("◀", callback_data=f"m:dg:{page - 1}"))
+    row.append(
+        InlineKeyboardButton(f"{page + 1}/{total}", callback_data="m:dg:noop")
+    )
+    if page < total - 1:
+        row.append(InlineKeyboardButton("▶", callback_data=f"m:dg:{page + 1}"))
+    rows = [row, [InlineKeyboardButton("« Меню", callback_data="m:home")]]
+    return InlineKeyboardMarkup(rows)
+
+
 SOURCE_PROMPTS = {
     "telegram": (
         "Пришлите публичный канал:\n"
