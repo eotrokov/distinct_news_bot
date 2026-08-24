@@ -1,0 +1,36 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate required deploy secrets
+        run: |
+          test -n "${DEPLOY_HOST}" || { echo "DEPLOY_HOST secret is required"; exit 1; }
+          test -n "${DEPLOY_USER}" || { echo "DEPLOY_USER secret is required"; exit 1; }
+          test -n "${{ secrets.DEPLOY_SSH_KEY }}" || { echo "DEPLOY_SSH_KEY secret is required"; exit 1; }
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Run remote deploy
+        run: |
+          export DEPLOY_SSH_KEY=~/.ssh/deploy_key
+          ./deploy/deploy.sh
