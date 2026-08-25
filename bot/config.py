@@ -19,7 +19,6 @@ class Settings:
     digest_limit: int
     digest_page_size: int
     fetch_timeout_seconds: float
-    rsshub_base_url: str | None
     default_lookback_hours: int
     default_digest_days: int
     summary_max_sentences: int
@@ -46,7 +45,6 @@ class Settings:
             digest_limit=max(1, int(_env("DIGEST_LIMIT", "30") or "30")),
             digest_page_size=max(1, int(_env("DIGEST_PAGE_SIZE", "10") or "10")),
             fetch_timeout_seconds=float(_env("FETCH_TIMEOUT_SECONDS", "20") or "20"),
-            rsshub_base_url=_env("RSSHUB_BASE_URL"),
             default_lookback_hours=lookback_hours,
             default_digest_days=digest_days,
             summary_max_sentences=max(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from bot.addlist import FolderChannel, parse_telegram_handles
 from bot.db import Database
-from bot.fetchers.ria import RIA_FEEDS
 from bot.fetchers.telegram import normalize_telegram_handle
 
 
@@ -49,19 +48,15 @@ def add_single_source(
     identifier: str,
     title: str,
 ):
-    if source_type == "telegram":
-        identifier = normalize_telegram_handle(identifier)
-        if not title or title.startswith("@"):
-            title = f"@{identifier}"
-    if source_type == "ria" and not (
-        identifier.startswith("http://") or identifier.startswith("https://")
-    ):
-        key = identifier.lower()
-        if key not in RIA_FEEDS:
-            known = ", ".join(sorted(RIA_FEEDS))
-            raise ValueError(f"Лента РИА: {known} или полный URL RSS")
-        identifier = key
-    return db.add_source(user_id, source_type, identifier, title)
+    if source_type != "telegram":
+        raise ValueError(
+            "Сейчас поддерживаются только публичные Telegram-каналы.\n"
+            "Пример: /add @bbcnews"
+        )
+    identifier = normalize_telegram_handle(identifier)
+    if not title or title.startswith("@"):
+        title = f"@{identifier}"
+    return db.add_source(user_id, "telegram", identifier, title)
 
 
 def format_add_report(

@@ -12,7 +12,7 @@ def _item(title: str, url: str = "", source: str = "a", **kwargs) -> NewsItem:
         title=title,
         url=url,
         published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        source_type="rss",
+        source_type="telegram",
         source_name=source,
         **kwargs,
     )
@@ -30,9 +30,9 @@ def test_fingerprint_stable():
 
 def test_deduplicate_exact_and_near():
     items = [
-        _item("Большой взрыв на заводе в Туле", "https://a.example/1", "ria"),
-        _item("Большой взрыв на заводе в Туле", "https://b.example/1", "tg"),
-        _item("Совершенно другая новость", "https://c.example/2", "rss"),
+        _item("Большой взрыв на заводе в Туле", "https://a.example/1", "ch1"),
+        _item("Большой взрыв на заводе в Туле", "https://b.example/1", "ch2"),
+        _item("Совершенно другая новость", "https://c.example/2", "ch3"),
     ]
     unique = deduplicate(items)
     assert len(unique) == 2
@@ -86,6 +86,21 @@ def test_parse_add_args():
     assert t == "telegram"
     assert ident == "bbcnews"
     assert title.startswith("@")
+
+
+def test_parse_add_args_bare_handle():
+    t, ident, title = parse_add_args(["@meduza"])
+    assert t == "telegram"
+    assert ident == "@meduza"
+    assert title == "@meduza"
+
+
+def test_parse_add_args_rejects_legacy_types():
+    try:
+        parse_add_args(["ria", "main"])
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "Telegram" in str(exc)
 
 
 def test_format_digest_empty():

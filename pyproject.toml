@@ -5,13 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "distinct-news-bot"
 version = "0.1.0"
-description = "Telegram bot that aggregates news from user-defined sources without duplicates"
+description = "Telegram bot that aggregates news from public Telegram channels without duplicates"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "python-telegram-bot[job-queue]>=21.6",
   "httpx>=0.27",
-  "feedparser>=6.0",
   "beautifulsoup4>=4.12",
   "lxml>=5.0",
 ]

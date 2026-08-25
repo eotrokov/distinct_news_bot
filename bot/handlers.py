@@ -39,7 +39,7 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """\
-Бот собирает сводку новостей из ваших источников без дублей.
+Бот собирает сводку новостей из ваших Telegram-каналов без дублей.
 
 Кнопки:
 • снизу экрана — быстрые действия
@@ -47,7 +47,7 @@ HELP_TEXT = """\
 
 Команды:
 /menu — открыть меню
-/add telegram @channel [название] — добавить канал
+/add @channel [название] — добавить канал
 /add telegram @a @b — несколько каналов сразу
 /addlist <ссылка> — папка t.me/addlist/… (затем пришлите список @каналов)
 /remove <id> — удалить источник
@@ -56,7 +56,7 @@ HELP_TEXT = """\
 /topic del <тема> — удалить тему
 /topics — список тем
 /topic clear — сбросить все темы
-/news — сводка за период (как недельный дайджест: выжимки, без дублей, по реакциям)
+/news — сводка за период (выжимки, без дублей, по реакциям)
 /news 7 — то же за 7 дней
 /reset — сбросить служебную точку прошлого запроса
 /cancel — отменить ввод
@@ -64,11 +64,11 @@ HELP_TEXT = """\
 
 Если темы заданы, в сводку попадают только новости, где встречается хотя бы одна тема (в заголовке или тексте). Без тем — все новости.
 
-Источники — публичные Telegram-каналы (@channel) или папки addlist.
+Источники — только публичные Telegram-каналы (@channel) или папки addlist.
 
 Примеры:
-/add telegram bbcnews
-/add telegram @ch1 @ch2 https://t.me/ch3
+/add bbcnews
+/add @ch1 @ch2 https://t.me/ch3
 /addlist https://t.me/addlist/_0flf9ViWOo0NjNi
 /topic add ai
 /news
@@ -116,14 +116,15 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     try:
-        if len(args) >= 2 and args[0].lower() in {
+        type_aliases = {
             "telegram",
             "tg",
             "channel",
             "addlist",
             "folder",
             "list",
-        }:
+        }
+        if args and args[0].lower() in type_aliases:
             rest = " ".join(args[1:])
             if extract_addlist_slug(rest) and "addlist" in rest.lower():
                 await begin_addlist_import(update, context, rest)
@@ -131,6 +132,15 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             handles = parse_telegram_handles(rest)
             if len(handles) > 1:
                 added, skipped = add_telegram_from_text(db, user_id, rest)
+                await update.message.reply_text(
+                    format_add_report(folder_title=None, added=added, skipped=skipped),
+                    reply_markup=main_reply_keyboard(),
+                )
+                return
+        else:
+            handles = parse_telegram_handles(joined)
+            if len(handles) > 1:
+                added, skipped = add_telegram_from_text(db, user_id, joined)
                 await update.message.reply_text(
                     format_add_report(folder_title=None, added=added, skipped=skipped),
                     reply_markup=main_reply_keyboard(),
@@ -151,7 +161,7 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     await update.message.reply_text(
-        f"Добавлен источник #{source.id}: [{source.source_type}] {source.title}\n"
+        f"Добавлен канал #{source.id}: {source.title}\n"
         f"`{source.identifier}`",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=main_reply_keyboard(),
