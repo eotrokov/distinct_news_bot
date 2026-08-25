@@ -6,13 +6,20 @@ from bot.models import Source
 
 # Reply keyboard labels (must match handlers)
 BTN_NEWS = "Сводка"
+BTN_NEW_ONLY = "Только новое"
 BTN_SOURCES = "Источники"
 BTN_TOPICS = "Темы"
 BTN_MENU = "Меню"
 BTN_HELP = "Помощь"
-BTN_RESET = "Сброс курсора"
 
-REPLY_BUTTONS = {BTN_NEWS, BTN_SOURCES, BTN_TOPICS, BTN_MENU, BTN_HELP, BTN_RESET}
+REPLY_BUTTONS = {
+    BTN_NEWS,
+    BTN_NEW_ONLY,
+    BTN_SOURCES,
+    BTN_TOPICS,
+    BTN_MENU,
+    BTN_HELP,
+}
 
 TELEGRAM_SOURCE_PROMPT = (
     "Пришлите публичный канал:\n"
@@ -22,13 +29,18 @@ TELEGRAM_SOURCE_PROMPT = (
     "(затем список @каналов из папки)"
 )
 
+ONBOARD_PROMPT = (
+    "Привет! Я собираю сводку из ваших Telegram-каналов без дублей.\n\n"
+    "Пришлите 1–3 публичных канала (@name), и я сразу сделаю пробную сводку."
+)
+
 
 def main_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
-            [BTN_NEWS, BTN_SOURCES],
-            [BTN_TOPICS, BTN_MENU],
-            [BTN_HELP, BTN_RESET],
+            [BTN_NEWS, BTN_NEW_ONLY],
+            [BTN_SOURCES, BTN_TOPICS],
+            [BTN_MENU, BTN_HELP],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -43,10 +55,25 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Источники", callback_data="m:sources"),
                 InlineKeyboardButton("Темы", callback_data="m:topics"),
             ],
+            [InlineKeyboardButton("Помощь", callback_data="m:help")],
+        ]
+    )
+
+
+def digest_mode_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
             [
-                InlineKeyboardButton("Сброс курсора", callback_data="m:reset"),
-                InlineKeyboardButton("Помощь", callback_data="m:help"),
+                InlineKeyboardButton(
+                    "🔥 Главное за период", callback_data="m:news:top"
+                )
             ],
+            [
+                InlineKeyboardButton(
+                    "🆕 Только новое", callback_data="m:news:new"
+                )
+            ],
+            [InlineKeyboardButton("« Меню", callback_data="m:home")],
         ]
     )
 

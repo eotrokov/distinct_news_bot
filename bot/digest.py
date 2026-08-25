@@ -34,7 +34,10 @@ def parse_days_arg(args: list[str] | None) -> int | None:
         return None
     raw = args[0].strip().lower().rstrip("dд")
     if not raw.isdigit():
-        raise ValueError("Формат: /news [дни], например /news 7 (1–30)")
+        raise ValueError(
+            "Формат: /news [дни] или /news new [дни]\n"
+            "Примеры: /news 7, /news new"
+        )
     days = int(raw)
     if days < MIN_DIGEST_DAYS or days > MAX_DIGEST_DAYS:
         raise ValueError(
@@ -94,11 +97,14 @@ class DigestService:
         self,
         user_id: int,
         days: int | None = None,
+        *,
+        only_unseen: bool = False,
     ) -> tuple[list[NewsItem], list[str], list[str], int, dict[str, Any]]:
         """Return (items, errors, topics, days_used, analysis).
 
         Same ranking pipeline as weekly digests: time window, noise filter,
-        merge duplicates, sort by reactions/views.
+        merge duplicates, sort by reactions/views. When ``only_unseen`` is
+        True, drop items already marked seen from prior digests.
         """
         days_used = clamp_digest_days(days, self.settings.default_digest_days)
         empty_analysis: dict[str, Any] = {
@@ -110,6 +116,7 @@ class DigestService:
                 "final_count": 0,
                 "period_days": days_used,
                 "sort_by": "reactions",
+                "only_unseen": only_unseen,
             },
         }
         sources = self.db.list_sources(user_id)
@@ -117,7 +124,7 @@ class DigestService:
         if not sources:
             return (
                 [],
-                ["Нет источников. Добавьте через /add"],
+                ["Нет каналов. Добавьте через /add или кнопку «Источники»"],
                 topics,
                 days_used,
                 empty_analysis,
@@ -160,6 +167,38 @@ class DigestService:
         flat: list[NewsItem] = []
         for cat_items in analysis["categories"].values():
             flat.extend(cat_items)
+
+        if only_unseen and flat:
+            fps = [fingerprint_for(item) for item in flat]
+            unseen_fps = self.db.filter_unseen(user_id, fps)
+            flat = [
+                item
+                for item, fp in zip(flat, fps)
+                if fp in unseen_fps
+            ]
+            keep = {(it.url, it.title, it.external_id) for it in flat}
+            analysis = {
+                **analysis,
+                "categories": {
+                    name: [
+                        it
+                        for it in cat
+                        if (it.url, it.title, it.external_id) in keep
+                    ]
+                    for name, cat in analysis["categories"].items()
+                    if any((it.url, it.title, it.external_id) in keep for it in cat)
+                },
+                "stats": {
+                    **analysis["stats"],
+                    "final_count": len(flat),
+                    "only_unseen": True,
+                },
+            }
+        else:
+            analysis = {
+                **analysis,
+                "stats": {**analysis["stats"], "only_unseen": only_unseen},
+            }
 
         limited = flat[: self.settings.digest_limit]
         if len(flat) > len(limited):
@@ -253,7 +292,16 @@ def format_digest_result(
             flat.append((cat_name, item))
 
     if not flat:
-        text = f"За последние {days_used} {_days_word(days_used)} новых постов нет."
+        only_unseen = bool(stats.get("only_unseen"))
+        if only_unseen:
+            text = (
+                f"За последние {days_used} {_days_word(days_used)} "
+                "нового нет — всё уже было в прошлых сводках.\n"
+                "Нажмите «Сводка» для топа за период или /reset, "
+                "чтобы снова показывать просмотренное."
+            )
+        else:
+            text = f"За последние {days_used} {_days_word(days_used)} новых постов нет."
         if topics:
             text = (
                 f"За последние {days_used} {_days_word(days_used)} нет постов "
@@ -265,9 +313,16 @@ def format_digest_result(
             )
         return [text]
 
-    header = (
-        f"🔥 Главные новости за {days_used} {_days_word(days_used)} (по реакциям)"
-    )
+    only_unseen = bool(stats.get("only_unseen"))
+    if only_unseen:
+        header = (
+            f"🆕 Только новое за {days_used} {_days_word(days_used)} "
+            "(ещё не было в сводках)"
+        )
+    else:
+        header = (
+            f"🔥 Главные новости за {days_used} {_days_word(days_used)} (по реакциям)"
+        )
     if topics:
         header += f"\nТемы: {', '.join(topics)}"
 

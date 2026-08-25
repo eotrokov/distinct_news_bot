@@ -29,6 +29,10 @@ def test_db_sources_and_seen(tmp_path):
     unseen = db.filter_unseen(user_id, ["aaa", "bbb", "ccc"])
     assert unseen == {"ccc"}
 
+    cleared = db.clear_seen(user_id)
+    assert cleared == 2
+    assert db.filter_unseen(user_id, ["aaa", "bbb"]) == {"aaa", "bbb"}
+
     assert db.remove_source(user_id, source.id) is True
     assert db.list_sources(user_id) == []
 

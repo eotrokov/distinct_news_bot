@@ -11,13 +11,14 @@ from bot.digest import DigestService, parse_add_args
 from bot.keyboards import (
     BTN_HELP,
     BTN_MENU,
+    BTN_NEW_ONLY,
     BTN_NEWS,
-    BTN_RESET,
     BTN_SOURCES,
     BTN_TOPICS,
     REPLY_BUTTONS,
     TELEGRAM_SOURCE_PROMPT,
     back_home_keyboard,
+    digest_mode_keyboard,
     digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
@@ -92,17 +93,22 @@ async def send_digest_to_chat(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     days: int | None = None,
+    *,
+    only_unseen: bool = False,
 ) -> None:
     if not update.effective_user or not update.effective_message:
         return
     digest: DigestService = context.application.bot_data["digest"]
     user_id = update.effective_user.id
-    status = await update.effective_message.reply_text(
-        "Собираю сводку по реакциям…"
+    status_text = (
+        "Собираю только новое…"
+        if only_unseen
+        else "Собираю сводку по реакциям…"
     )
+    status = await update.effective_message.reply_text(status_text)
     try:
         items, errors, topics, days_used, analysis = await digest.collect_for_user(
-            user_id, days=days
+            user_id, days=days, only_unseen=only_unseen
         )
     except Exception:  # noqa: BLE001
         logger.exception("Digest failed for user %s", user_id)
@@ -131,10 +137,10 @@ def sources_text(db: Database, user_id: int) -> str:
     sources = db.list_sources(user_id)
     if not sources:
         return (
-            "Источников пока нет.\n"
-            "Нажмите «Добавить источник» или используйте /add"
+            "Каналов пока нет.\n"
+            "Нажмите «Добавить канал» или пришлите @channel"
         )
-    lines = ["Ваши источники (нажмите, чтобы удалить):"]
+    lines = ["Ваши каналы (нажмите, чтобы удалить):"]
     for s in sources:
         lines.append(f"#{s.id} {s.title}\n  {s.identifier}")
         if s.source_type != "telegram":
@@ -242,7 +248,18 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if data == "m:news":
         clear_awaiting(context)
-        await send_digest_to_chat(update, context)
+        await query.edit_message_text(
+            "Какую сводку показать?",
+            reply_markup=digest_mode_keyboard(),
+        )
+        return
+    if data == "m:news:top":
+        clear_awaiting(context)
+        await send_digest_to_chat(update, context, only_unseen=False)
+        return
+    if data == "m:news:new":
+        clear_awaiting(context)
+        await send_digest_to_chat(update, context, only_unseen=True)
         return
     if data == "m:sources":
         await show_sources_panel(update, context, edit=True)
@@ -257,10 +274,13 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.edit_message_text(HELP_TEXT, reply_markup=back_home_keyboard())
         return
     if data == "m:reset":
+        # Legacy callback: clear seen items so "Только новое" can show them again.
         clear_awaiting(context)
+        cleared = db.clear_seen(user_id)
         db.reset_last_digest_at(user_id)
         await query.edit_message_text(
-            "Точка прошлого запроса сброшена.",
+            f"Просмотренное сброшено ({cleared}). "
+            "«Только новое» снова покажет эти посты.",
             reply_markup=back_home_keyboard(),
         )
         return
@@ -325,7 +345,9 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     db.ensure_user(update.effective_user.id)
 
     if text == BTN_NEWS:
-        await send_digest_to_chat(update, context)
+        await send_digest_to_chat(update, context, only_unseen=False)
+    elif text == BTN_NEW_ONLY:
+        await send_digest_to_chat(update, context, only_unseen=True)
     elif text == BTN_SOURCES:
         await show_sources_panel(update, context)
     elif text == BTN_TOPICS:
@@ -336,12 +358,6 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         from bot.handlers import HELP_TEXT
 
         await update.message.reply_text(HELP_TEXT, reply_markup=main_reply_keyboard())
-    elif text == BTN_RESET:
-        db.reset_last_digest_at(update.effective_user.id)
-        await update.message.reply_text(
-            "Точка прошлого запроса сброшена.",
-            reply_markup=main_reply_keyboard(),
-        )
 
 
 async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -362,6 +378,38 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     kind = awaiting.get("kind")
 
     try:
+        if kind == "onboard":
+            from bot.addlist import extract_addlist_slug, parse_telegram_handles
+            from bot.handlers import begin_addlist_import
+            from bot.sources_ops import add_telegram_from_text, format_add_report
+
+            if extract_addlist_slug(text) and "addlist" in text.lower():
+                clear_awaiting(context)
+                await begin_addlist_import(update, context, text)
+                return
+
+            handles = parse_telegram_handles(text)
+            if not handles:
+                await update.message.reply_text(
+                    "Не нашёл каналов. Пришлите @name или https://t.me/name\n"
+                    "Или /cancel чтобы отменить.",
+                    reply_markup=main_reply_keyboard(),
+                )
+                return
+
+            added, skipped = add_telegram_from_text(db, user_id, text)
+            clear_awaiting(context)
+            await update.message.reply_text(
+                format_add_report(folder_title=None, added=added, skipped=skipped),
+                reply_markup=main_reply_keyboard(),
+            )
+            if added or db.list_sources(user_id):
+                await update.message.reply_text(
+                    "Отлично! Собираю пробную сводку…"
+                )
+                await send_digest_to_chat(update, context, only_unseen=False)
+            return
+
         if kind == "addlist_channels":
             from bot.sources_ops import add_telegram_from_text, format_add_report
 
