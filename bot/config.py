@@ -11,6 +11,17 @@ def _env(name: str, default: str | None = None) -> str | None:
     return value.strip()
 
 
+def _parse_admin_ids(raw: str | None) -> frozenset[int]:
+    if not raw:
+        return frozenset()
+    ids: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return frozenset(ids)
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
@@ -19,9 +30,14 @@ class Settings:
     digest_limit: int
     digest_page_size: int
     fetch_timeout_seconds: float
+    fetch_concurrency: int
+    fetch_cache_ttl_seconds: float
     default_lookback_hours: int
     default_digest_days: int
     summary_max_sentences: int
+    admin_user_ids: frozenset[int]
+    pro_stars_price: int
+    plus_stars_price: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -45,9 +61,16 @@ class Settings:
             digest_limit=max(1, int(_env("DIGEST_LIMIT", "30") or "30")),
             digest_page_size=max(1, int(_env("DIGEST_PAGE_SIZE", "10") or "10")),
             fetch_timeout_seconds=float(_env("FETCH_TIMEOUT_SECONDS", "20") or "20"),
+            fetch_concurrency=max(1, int(_env("FETCH_CONCURRENCY", "5") or "5")),
+            fetch_cache_ttl_seconds=float(
+                _env("FETCH_CACHE_TTL_SECONDS", "120") or "120"
+            ),
             default_lookback_hours=lookback_hours,
             default_digest_days=digest_days,
             summary_max_sentences=max(
                 1, int(_env("SUMMARY_MAX_SENTENCES", "3") or "3")
             ),
+            admin_user_ids=_parse_admin_ids(_env("ADMIN_USER_IDS")),
+            pro_stars_price=max(1, int(_env("PRO_STARS_PRICE", "350") or "350")),
+            plus_stars_price=max(1, int(_env("PLUS_STARS_PRICE", "700") or "700")),
         )

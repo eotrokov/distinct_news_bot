@@ -11,6 +11,7 @@ from bot.config import Settings
 from bot.db import Database
 from bot.dedupe import fingerprint_for
 from bot.fetchers import FetchError, TelegramChannelFetcher
+from bot.http_util import HttpService
 from bot.models import NewsItem, Source, SourceType
 from bot.topics import item_matches_topics
 
@@ -89,9 +90,20 @@ class DigestService:
         self.db = db
         self.settings = settings
         self.analyzer = NewsAnalyzer()
+        self.http = HttpService(
+            timeout=settings.fetch_timeout_seconds,
+            concurrency=settings.fetch_concurrency,
+            cache_ttl_seconds=settings.fetch_cache_ttl_seconds,
+        )
         self.fetchers = {
-            "telegram": TelegramChannelFetcher(timeout=settings.fetch_timeout_seconds),
+            "telegram": TelegramChannelFetcher(
+                timeout=settings.fetch_timeout_seconds,
+                http=self.http,
+            ),
         }
+
+    async def aclose(self) -> None:
+        await self.http.aclose()
 
     async def collect_for_user(
         self,
@@ -107,6 +119,10 @@ class DigestService:
         True, drop items already marked seen from prior digests.
         """
         days_used = clamp_digest_days(days, self.settings.default_digest_days)
+        ent = self.db.get_entitlement(user_id)
+        max_days = ent.limits().max_digest_days
+        if days_used > max_days:
+            days_used = max_days
         empty_analysis: dict[str, Any] = {
             "categories": {},
             "stats": {

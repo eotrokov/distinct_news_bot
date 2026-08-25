@@ -23,12 +23,22 @@ async def deliver_digest_to_user(
     days: int | None = None,
     only_unseen: bool = False,
     preface: str | None = None,
+    consume_quota: bool = True,
 ) -> bool:
     """Collect and send a digest to a private chat (chat_id == user_id).
 
     Returns True if a message was sent.
     """
     digest: DigestService = context.application.bot_data["digest"]
+    db: Database = context.application.bot_data["db"]
+    if consume_quota:
+        allowed, ent = db.consume_digest_quota(user_id)
+        if not allowed:
+            logger.info(
+                "Skip scheduled digest for user %s — daily quota exhausted",
+                user_id,
+            )
+            return False
     try:
         items, errors, topics, days_used, analysis = await digest.collect_for_user(
             user_id, days=days, only_unseen=only_unseen

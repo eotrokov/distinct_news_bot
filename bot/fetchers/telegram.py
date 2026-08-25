@@ -7,6 +7,7 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from bot.fetchers.base import BaseFetcher, FetchError
+from bot.http_util import HttpService
 from bot.models import NewsItem, Source
 from bot.summarize import clean_and_summarize, clean_text, first_meaningful_line
 
@@ -58,8 +59,13 @@ class TelegramChannelFetcher(BaseFetcher):
 
     source_type = "telegram"
 
-    def __init__(self, timeout: float = 20.0) -> None:
+    def __init__(
+        self,
+        timeout: float = 20.0,
+        http: "HttpService | None" = None,
+    ) -> None:
         self.timeout = timeout
+        self.http = http
 
     async def fetch(
         self,
@@ -73,19 +79,15 @@ class TelegramChannelFetcher(BaseFetcher):
         before: int | None = None
         pages = max(1, int(max_pages))
 
-        async with httpx.AsyncClient(
-            timeout=self.timeout,
-            follow_redirects=True,
-            headers={"User-Agent": "distinct-news-bot/0.1"},
-        ) as client:
+        own_http = self.http is None
+        http = self.http or HttpService(timeout=self.timeout)
+        try:
             for _ in range(pages):
                 url = f"https://t.me/s/{handle}"
                 if before is not None:
                     url = f"{url}?before={before}"
                 try:
-                    response = await client.get(url)
-                    response.raise_for_status()
-                    html = response.text
+                    html = await http.get_text(url)
                 except httpx.HTTPError as exc:
                     if items:
                         break
@@ -108,6 +110,9 @@ class TelegramChannelFetcher(BaseFetcher):
                 if stop or oldest_id is None:
                     break
                 before = oldest_id
+        finally:
+            if own_http:
+                await http.aclose()
 
         seen: set[str] = set()
         unique: list[NewsItem] = []
