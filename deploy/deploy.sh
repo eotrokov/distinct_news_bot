@@ -73,7 +73,10 @@ EOF
 fi
 
 echo "==> Building and restarting container (branch hint: $DEPLOY_BRANCH)"
-ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && docker compose up -d --build --remove-orphans && docker compose ps"
+ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && \
+  docker image prune -af >/dev/null 2>&1 || true; \
+  docker builder prune -af >/dev/null 2>&1 || true; \
+  docker compose up -d --build --remove-orphans && docker compose ps"
 
 echo "==> Recent logs"
 ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && docker compose logs --tail=40 bot"
