@@ -31,15 +31,30 @@ def fingerprint_for(item: NewsItem) -> str:
 
 
 def _token_set(text: str) -> set[str]:
-    return {t for t in normalize_title(text).split() if len(t) > 2}
+    return {
+        t
+        for t in normalize_title(text).split()
+        if t.isdigit() or len(t) > 2
+    }
+
+
+def _compare_text(item: NewsItem) -> str:
+    """Title plus a short excerpt from summary/body for cross-source matching."""
+    parts = [item.title or ""]
+    extra = (item.summary or item.body or "").strip()
+    if extra:
+        parts.append(extra[:240])
+    return " ".join(parts)
 
 
 def are_near_duplicates(a: NewsItem, b: NewsItem, threshold: float = 0.86) -> bool:
     if a.url and b.url and a.url.rstrip("/") == b.url.rstrip("/"):
         return True
 
-    ta = normalize_title(a.title)
-    tb = normalize_title(b.title)
+    text_a = _compare_text(a)
+    text_b = _compare_text(b)
+    ta = normalize_title(text_a)
+    tb = normalize_title(text_b)
     if not ta or not tb:
         return False
     if ta == tb:
@@ -49,11 +64,20 @@ def are_near_duplicates(a: NewsItem, b: NewsItem, threshold: float = 0.86) -> bo
     if ratio >= threshold:
         return True
 
-    sa, sb = _token_set(a.title), _token_set(b.title)
+    sa, sb = _token_set(text_a), _token_set(text_b)
     if not sa or not sb:
         return False
     jaccard = len(sa & sb) / len(sa | sb)
-    return jaccard >= 0.75 and ratio >= 0.72
+    if jaccard >= 0.75 and ratio >= 0.72:
+        return True
+
+    inter = sa & sb
+    if len(inter) >= 3:
+        containment = len(inter) / min(len(sa), len(sb))
+        if containment >= 0.5 and ratio >= 0.4:
+            return True
+
+    return False
 
 
 def deduplicate(items: list[NewsItem]) -> list[NewsItem]:

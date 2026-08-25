@@ -7,13 +7,14 @@ from bot.digest import format_digest, parse_add_args
 from bot.models import NewsItem
 
 
-def _item(title: str, url: str = "", source: str = "a") -> NewsItem:
+def _item(title: str, url: str = "", source: str = "a", **kwargs) -> NewsItem:
     return NewsItem(
         title=title,
         url=url,
         published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         source_type="rss",
         source_name=source,
+        **kwargs,
     )
 
 
@@ -36,6 +37,48 @@ def test_deduplicate_exact_and_near():
     unique = deduplicate(items)
     assert len(unique) == 2
     assert are_near_duplicates(items[0], items[1])
+
+
+def test_are_near_duplicates_paraphrased_pitbike_story():
+    short = _item(
+        "⚡⚡⚡ 16-летняя девушка разбилась насмерть на питбайке по Малоярославцем!",
+        "https://a.example/pit",
+        "tg1",
+    )
+    long = _item(
+        "⚠️ 16-ЛЕТНЯЯ ДЕВУШКА ПОГИБЛА В ДТП НА ПИТБАЙКЕ! "
+        "Смертельная авария произошла вечером в субботу, 22 августа",
+        "https://b.example/pit",
+        "tg2",
+    )
+    assert are_near_duplicates(short, long)
+
+
+def test_are_near_duplicates_google_rewrite():
+    a = _item("Google запускает профили издателей в поиске", "https://a.example/g")
+    b = _item("В поиске Google появились профили издателей", "https://b.example/g")
+    assert are_near_duplicates(a, b)
+
+
+def test_are_near_duplicates_rejects_unrelated_same_age():
+    a = _item(
+        "16-летняя девушка победила на олимпиаде по математике в Калуге",
+        "https://a.example/math",
+    )
+    b = _item(
+        "16-летняя девушка разбилась насмерть на питбайке по Малоярославцем",
+        "https://b.example/pit",
+    )
+    assert not are_near_duplicates(a, b)
+
+
+def test_are_near_duplicates_rejects_different_events():
+    a = _item("83-летняя женщина пострадала от упавшего дерева в Калуге", "https://a.example/tree")
+    b = _item(
+        "16-летняя девушка разбилась насмерть на питбайке по Малоярославцем",
+        "https://b.example/pit",
+    )
+    assert not are_near_duplicates(a, b)
 
 
 def test_parse_add_args():
