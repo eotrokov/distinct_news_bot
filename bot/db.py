@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterator
 
 from bot.models import Source, SourceType
+from bot.schedule import UserSchedule
 
 
 def _utc_now() -> datetime:
@@ -90,6 +91,20 @@ class Database:
                     ON topics(user_id);
                 """
             )
+            self._ensure_user_schedule_columns(conn)
+
+    @staticmethod
+    def _ensure_user_schedule_columns(conn: sqlite3.Connection) -> None:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+        alterations = [
+            ("schedule_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("schedule_hour", "INTEGER NOT NULL DEFAULT 9"),
+            ("tz_offset_minutes", "INTEGER NOT NULL DEFAULT 180"),
+            ("last_schedule_date", "TEXT"),
+        ]
+        for name, typedef in alterations:
+            if name not in cols:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {name} {typedef}")
 
     def ensure_user(self, user_id: int) -> None:
         now = _utc_now().isoformat()
@@ -294,6 +309,91 @@ class Database:
                 (user_id,),
             ).fetchall()
         return [(int(row["id"]), str(row["topic"])) for row in rows]
+
+    def get_schedule(self, user_id: int) -> UserSchedule:
+        self.ensure_user(user_id)
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT user_id, schedule_enabled, schedule_hour,
+                       tz_offset_minutes, last_schedule_date
+                FROM users WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        return self._row_to_schedule(row)
+
+    def set_schedule(
+        self,
+        user_id: int,
+        *,
+        enabled: bool | None = None,
+        hour: int | None = None,
+        tz_offset_minutes: int | None = None,
+    ) -> UserSchedule:
+        self.ensure_user(user_id)
+        current = self.get_schedule(user_id)
+        new_enabled = current.enabled if enabled is None else bool(enabled)
+        new_hour = current.hour if hour is None else int(hour)
+        new_tz = (
+            current.tz_offset_minutes
+            if tz_offset_minutes is None
+            else int(tz_offset_minutes)
+        )
+        if not 0 <= new_hour <= 23:
+            raise ValueError("Час должен быть от 0 до 23")
+        if not -12 * 60 <= new_tz <= 14 * 60:
+            raise ValueError("Смещение вне диапазона UTC−12…UTC+14")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET schedule_enabled = ?, schedule_hour = ?, tz_offset_minutes = ?
+                WHERE user_id = ?
+                """,
+                (1 if new_enabled else 0, new_hour, new_tz, user_id),
+            )
+        return self.get_schedule(user_id)
+
+    def mark_schedule_sent(self, user_id: int, local_date: str) -> None:
+        self.ensure_user(user_id)
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE users SET last_schedule_date = ? WHERE user_id = ?",
+                (local_date, user_id),
+            )
+
+    def list_due_schedules(self, now: datetime | None = None) -> list[UserSchedule]:
+        now = now or _utc_now()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, schedule_enabled, schedule_hour,
+                       tz_offset_minutes, last_schedule_date
+                FROM users
+                WHERE schedule_enabled = 1
+                """
+            ).fetchall()
+        due: list[UserSchedule] = []
+        for row in rows:
+            schedule = self._row_to_schedule(row)
+            if schedule.due_now(now):
+                due.append(schedule)
+        return due
+
+    @staticmethod
+    def _row_to_schedule(row: sqlite3.Row) -> UserSchedule:
+        return UserSchedule(
+            user_id=int(row["user_id"]),
+            enabled=bool(row["schedule_enabled"]),
+            hour=int(row["schedule_hour"] if row["schedule_hour"] is not None else 9),
+            tz_offset_minutes=int(
+                row["tz_offset_minutes"]
+                if row["tz_offset_minutes"] is not None
+                else 180
+            ),
+            last_schedule_date=row["last_schedule_date"],
+        )
 
     @staticmethod
     def _row_to_source(row: sqlite3.Row) -> Source:

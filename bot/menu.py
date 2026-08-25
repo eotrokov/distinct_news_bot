@@ -13,6 +13,7 @@ from bot.keyboards import (
     BTN_MENU,
     BTN_NEW_ONLY,
     BTN_NEWS,
+    BTN_SCHEDULE,
     BTN_SOURCES,
     BTN_TOPICS,
     REPLY_BUTTONS,
@@ -22,9 +23,11 @@ from bot.keyboards import (
     digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
+    schedule_keyboard,
     sources_keyboard,
     topics_keyboard,
 )
+from bot.schedule import format_schedule_status
 from bot.topics import parse_topic_args
 
 logger = logging.getLogger(__name__)
@@ -180,6 +183,26 @@ async def show_sources_panel(
         await update.effective_message.reply_text(text, reply_markup=markup)
 
 
+async def show_schedule_panel(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    edit: bool = False,
+) -> None:
+    clear_awaiting(context)
+    if not update.effective_user:
+        return
+    db: Database = context.application.bot_data["db"]
+    user_id = update.effective_user.id
+    schedule = db.get_schedule(user_id)
+    text = format_schedule_status(schedule)
+    markup = schedule_keyboard(enabled=schedule.enabled)
+    if edit and update.callback_query and update.callback_query.message:
+        await update.callback_query.edit_message_text(text, reply_markup=markup)
+    elif update.effective_message:
+        await update.effective_message.reply_text(text, reply_markup=markup)
+
+
 async def show_topics_panel(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -267,6 +290,39 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data == "m:topics":
         await show_topics_panel(update, context, edit=True)
         return
+    if data == "m:schedule":
+        await show_schedule_panel(update, context, edit=True)
+        return
+    if data == "m:sched:on":
+        schedule = db.set_schedule(user_id, enabled=True)
+        await query.edit_message_text(
+            format_schedule_status(schedule),
+            reply_markup=schedule_keyboard(enabled=schedule.enabled),
+        )
+        return
+    if data == "m:sched:off":
+        schedule = db.set_schedule(user_id, enabled=False)
+        await query.edit_message_text(
+            format_schedule_status(schedule),
+            reply_markup=schedule_keyboard(enabled=schedule.enabled),
+        )
+        return
+    if data.startswith("m:sched:h:"):
+        hour = int(data.split(":")[3])
+        schedule = db.set_schedule(user_id, enabled=True, hour=hour)
+        await query.edit_message_text(
+            format_schedule_status(schedule),
+            reply_markup=schedule_keyboard(enabled=schedule.enabled),
+        )
+        return
+    if data.startswith("m:sched:tz:"):
+        offset = int(data.split(":")[3])
+        schedule = db.set_schedule(user_id, tz_offset_minutes=offset)
+        await query.edit_message_text(
+            format_schedule_status(schedule),
+            reply_markup=schedule_keyboard(enabled=schedule.enabled),
+        )
+        return
     if data == "m:help":
         clear_awaiting(context)
         from bot.handlers import HELP_TEXT
@@ -352,6 +408,8 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await show_sources_panel(update, context)
     elif text == BTN_TOPICS:
         await show_topics_panel(update, context)
+    elif text == BTN_SCHEDULE:
+        await show_schedule_panel(update, context)
     elif text == BTN_MENU:
         await show_main_menu(update, context)
     elif text == BTN_HELP:

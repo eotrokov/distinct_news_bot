@@ -26,6 +26,7 @@ from bot.menu import (
     send_digest_to_chat,
     set_awaiting,
     show_main_menu,
+    show_schedule_panel,
     show_sources_panel,
     show_topics_panel,
 )
@@ -44,6 +45,7 @@ HELP_TEXT = """\
 Кнопки:
 • Сводка — главные новости за период (по реакциям)
 • Только новое — посты, которых ещё не было в сводках
+• Расписание — ежедневная авто-сводка
 • /menu — подробное inline-меню
 
 Команды:
@@ -60,6 +62,7 @@ HELP_TEXT = """\
 /news — главные за период
 /news 7 — то же за 7 дней
 /news new — только новое
+/schedule — авто-сводка по расписанию
 /reset — сбросить просмотренное (чтобы «Только новое» показало их снова)
 /cancel — отменить ввод
 /help — эта справка
@@ -347,6 +350,51 @@ async def topics_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await show_topics_panel(update, context)
 
 
+async def schedule_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    db: Database = context.application.bot_data["db"]
+    user_id = update.effective_user.id
+    args = list(context.args or [])
+    if not args:
+        await show_schedule_panel(update, context)
+        return
+
+    from bot.schedule import format_schedule_status, parse_tz_offset
+
+    action = args[0].lower()
+    try:
+        if action in {"on", "enable", "вкл"}:
+            hour = int(args[1]) if len(args) > 1 else None
+            schedule = db.set_schedule(user_id, enabled=True, hour=hour)
+        elif action in {"off", "disable", "выкл"}:
+            schedule = db.set_schedule(user_id, enabled=False)
+        elif action in {"hour", "час", "time"}:
+            if len(args) < 2:
+                raise ValueError("Формат: /schedule hour 9")
+            schedule = db.set_schedule(user_id, hour=int(args[1]), enabled=True)
+        elif action in {"tz", "timezone", "пояс"}:
+            if len(args) < 2:
+                raise ValueError("Формат: /schedule tz +3")
+            offset = parse_tz_offset(args[1])
+            schedule = db.set_schedule(user_id, tz_offset_minutes=offset)
+        else:
+            raise ValueError(
+                "Команды: /schedule on [час], /schedule off, "
+                "/schedule hour 9, /schedule tz +3"
+            )
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+
+    from bot.keyboards import schedule_keyboard
+
+    await update.message.reply_text(
+        format_schedule_status(schedule),
+        reply_markup=schedule_keyboard(enabled=schedule.enabled),
+    )
+
+
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
@@ -410,6 +458,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("filters", topics_cmd))
     app.add_handler(CommandHandler("news", news))
     app.add_handler(CommandHandler("digest", news))
+    app.add_handler(CommandHandler("schedule", schedule_cmd))
     app.add_handler(CommandHandler("reset", reset_cursor))
     app.add_handler(CallbackQueryHandler(on_callback, pattern=r"^m:"))
     app.add_handler(

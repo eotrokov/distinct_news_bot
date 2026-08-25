@@ -9,6 +9,7 @@ BTN_NEWS = "Сводка"
 BTN_NEW_ONLY = "Только новое"
 BTN_SOURCES = "Источники"
 BTN_TOPICS = "Темы"
+BTN_SCHEDULE = "Расписание"
 BTN_MENU = "Меню"
 BTN_HELP = "Помощь"
 
@@ -17,6 +18,7 @@ REPLY_BUTTONS = {
     BTN_NEW_ONLY,
     BTN_SOURCES,
     BTN_TOPICS,
+    BTN_SCHEDULE,
     BTN_MENU,
     BTN_HELP,
 }
@@ -40,7 +42,8 @@ def main_reply_keyboard() -> ReplyKeyboardMarkup:
         [
             [BTN_NEWS, BTN_NEW_ONLY],
             [BTN_SOURCES, BTN_TOPICS],
-            [BTN_MENU, BTN_HELP],
+            [BTN_SCHEDULE, BTN_MENU],
+            [BTN_HELP],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -55,6 +58,7 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Источники", callback_data="m:sources"),
                 InlineKeyboardButton("Темы", callback_data="m:topics"),
             ],
+            [InlineKeyboardButton("Расписание", callback_data="m:schedule")],
             [InlineKeyboardButton("Помощь", callback_data="m:help")],
         ]
     )
@@ -72,6 +76,34 @@ def digest_mode_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     "🆕 Только новое", callback_data="m:news:new"
                 )
+            ],
+            [InlineKeyboardButton("« Меню", callback_data="m:home")],
+        ]
+    )
+
+
+def schedule_keyboard(*, enabled: bool) -> InlineKeyboardMarkup:
+    toggle = (
+        InlineKeyboardButton("Выключить", callback_data="m:sched:off")
+        if enabled
+        else InlineKeyboardButton("Включить (09:00)", callback_data="m:sched:on")
+    )
+    return InlineKeyboardMarkup(
+        [
+            [toggle],
+            [
+                InlineKeyboardButton("08:00", callback_data="m:sched:h:8"),
+                InlineKeyboardButton("09:00", callback_data="m:sched:h:9"),
+                InlineKeyboardButton("10:00", callback_data="m:sched:h:10"),
+            ],
+            [
+                InlineKeyboardButton("12:00", callback_data="m:sched:h:12"),
+                InlineKeyboardButton("18:00", callback_data="m:sched:h:18"),
+                InlineKeyboardButton("21:00", callback_data="m:sched:h:21"),
+            ],
+            [
+                InlineKeyboardButton("UTC+3", callback_data="m:sched:tz:180"),
+                InlineKeyboardButton("UTC+0", callback_data="m:sched:tz:0"),
             ],
             [InlineKeyboardButton("« Меню", callback_data="m:home")],
         ]

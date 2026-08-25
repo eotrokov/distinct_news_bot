@@ -9,6 +9,7 @@ from bot.config import Settings
 from bot.db import Database
 from bot.digest import DigestService
 from bot.handlers import register_handlers
+from bot.jobs import setup_schedule_jobs
 
 
 def setup_logging(level: str) -> None:
@@ -22,12 +23,17 @@ def setup_logging(level: str) -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
+async def _post_init(app: Application) -> None:
+    setup_schedule_jobs(app)
+
+
 def build_app(settings: Settings) -> Application:
     db = Database(settings.db_path)
     digest = DigestService(db, settings)
     app = (
         Application.builder()
         .token(settings.telegram_bot_token)
+        .post_init(_post_init)
         .build()
     )
     app.bot_data["db"] = db
