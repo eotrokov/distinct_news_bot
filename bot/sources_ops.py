@@ -13,6 +13,8 @@ def add_telegram_channels(
     """Add telegram sources. Returns (added_labels, skipped_labels)."""
     added: list[str] = []
     skipped: list[str] = []
+    limits = db.get_entitlement(user_id).limits()
+    current = len(db.list_sources(user_id))
     for item in channels:
         if isinstance(item, FolderChannel):
             handle, title = item.username, item.title or f"@{item.username}"
@@ -22,6 +24,9 @@ def add_telegram_channels(
             handle, title = item, f"@{item.lstrip('@')}"
         handle = normalize_telegram_handle(handle)
         label = f"@{handle}"
+        if current + len(added) >= limits.max_sources:
+            skipped.append(f"{label} (лимит плана {limits.max_sources})")
+            continue
         try:
             db.add_source(user_id, "telegram", handle, title or label)
             added.append(label)
@@ -52,6 +57,12 @@ def add_single_source(
         raise ValueError(
             "Сейчас поддерживаются только публичные Telegram-каналы.\n"
             "Пример: /add @bbcnews"
+        )
+    limits = db.get_entitlement(user_id).limits()
+    if len(db.list_sources(user_id)) >= limits.max_sources:
+        raise ValueError(
+            f"Лимит каналов плана ({limits.max_sources}). "
+            "Оформите Pro: /buy pro"
         )
     identifier = normalize_telegram_handle(identifier)
     if not title or title.startswith("@"):

@@ -54,9 +54,17 @@ Telegram-бот, который собирает сводку новостей �
 
 1. Пришлите `/addlist https://t.me/addlist/…` (или просто ссылку).
 2. Бот покажет название папки.
-3. Пришлите публичные `@username` каналов из папки (через пробел или с новой строки).
+3. Пришлите публичные `@username` каналов из папки вручную (через пробел или с новой строки). Telegram не отдаёт список каналов папки ботам.
 
 Либо сразу: `/add @ch1 @ch2 https://t.me/ch3`.
+
+### Подписка (Telegram Stars)
+
+- Trial 7 дней (как Pro)
+- Free: 3 канала, 3 сводки/день, без расписания
+- Pro / Plus: больше каналов и сводок, расписание — оплата Stars (`/buy pro`, `/buy plus`)
+- `/plan` — статус; `/delete_me` — удалить данные
+- Админ: `ADMIN_USER_IDS`, команды `/grant`, `/stats`
 
 Дубли отсекаются по заголовку, URL и похожести текстов. Сводка ранжирует оставшиеся посты по реакциям и просмотрам.
 
@@ -126,4 +134,8 @@ export DEPLOY_USER=ubuntu
 | `DEFAULT_DIGEST_DAYS` | окно сводки в днях (по умолчанию из `DEFAULT_LOOKBACK_HOURS`) |
 | `DEFAULT_LOOKBACK_HOURS` | запасное окно, если `DEFAULT_DIGEST_DAYS` не задан |
 | `SUMMARY_MAX_SENTENCES` | сколько предложений в выжимке одного поста (по умолчанию 3) |
+| `FETCH_CONCURRENCY` | параллельных запросов к t.me (по умолчанию 5) |
+| `FETCH_CACHE_TTL_SECONDS` | TTL кэша HTML каналов в секундах (по умолчанию 120) |
+| `ADMIN_USER_IDS` | telegram user id через запятую для `/grant` и `/stats` |
+| `PRO_STARS_PRICE` / `PLUS_STARS_PRICE` | цена подписки в Stars |
 | `LOG_LEVEL` | `INFO` / `DEBUG` |

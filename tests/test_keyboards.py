@@ -3,11 +3,13 @@ from __future__ import annotations
 from bot.keyboards import (
     BTN_NEW_ONLY,
     BTN_NEWS,
+    BTN_PLAN,
     BTN_SCHEDULE,
     digest_mode_keyboard,
     digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
+    plan_keyboard,
     schedule_keyboard,
     sources_keyboard,
     topics_keyboard,
@@ -22,15 +24,24 @@ def test_main_keyboards():
     assert BTN_NEWS in labels
     assert BTN_NEW_ONLY in labels
     assert BTN_SCHEDULE in labels
+    assert BTN_PLAN in labels
     assert "Сброс курсора" not in labels
     inline = main_inline_keyboard()
     assert any(btn.callback_data == "m:news" for row in inline.inline_keyboard for btn in row)
     assert any(
         btn.callback_data == "m:schedule" for row in inline.inline_keyboard for btn in row
     )
+    assert any(btn.callback_data == "m:plan" for row in inline.inline_keyboard for btn in row)
     assert not any(
         btn.callback_data == "m:reset" for row in inline.inline_keyboard for btn in row
     )
+
+
+def test_plan_keyboard():
+    kb = plan_keyboard()
+    data = {b.callback_data for r in kb.inline_keyboard for b in r}
+    assert "m:buy:pro" in data
+    assert "m:buy:plus" in data
 
 
 def test_schedule_keyboard():

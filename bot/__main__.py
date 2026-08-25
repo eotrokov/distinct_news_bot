@@ -27,6 +27,12 @@ async def _post_init(app: Application) -> None:
     setup_schedule_jobs(app)
 
 
+async def _post_shutdown(app: Application) -> None:
+    digest: DigestService | None = app.bot_data.get("digest")
+    if digest is not None:
+        await digest.aclose()
+
+
 def build_app(settings: Settings) -> Application:
     db = Database(settings.db_path)
     digest = DigestService(db, settings)
@@ -34,6 +40,7 @@ def build_app(settings: Settings) -> Application:
         Application.builder()
         .token(settings.telegram_bot_token)
         .post_init(_post_init)
+        .post_shutdown(_post_shutdown)
         .build()
     )
     app.bot_data["db"] = db
@@ -48,7 +55,13 @@ def main() -> None:
     setup_logging(settings.log_level)
     app = build_app(settings)
     logging.getLogger(__name__).info("Starting distinct-news-bot")
-    app.run_polling(allowed_updates=["message", "callback_query"])
+    app.run_polling(
+        allowed_updates=[
+            "message",
+            "callback_query",
+            "pre_checkout_query",
+        ]
+    )
 
 
 if __name__ == "__main__":

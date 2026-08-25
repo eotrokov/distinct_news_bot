@@ -10,6 +10,7 @@ BTN_NEW_ONLY = "Только новое"
 BTN_SOURCES = "Источники"
 BTN_TOPICS = "Темы"
 BTN_SCHEDULE = "Расписание"
+BTN_PLAN = "Подписка"
 BTN_MENU = "Меню"
 BTN_HELP = "Помощь"
 
@@ -19,6 +20,7 @@ REPLY_BUTTONS = {
     BTN_SOURCES,
     BTN_TOPICS,
     BTN_SCHEDULE,
+    BTN_PLAN,
     BTN_MENU,
     BTN_HELP,
 }
@@ -27,8 +29,8 @@ TELEGRAM_SOURCE_PROMPT = (
     "Пришлите публичный канал:\n"
     "• @channel или https://t.me/channel\n"
     "• несколько каналов через пробел/строки\n"
-    "• ссылку папки https://t.me/addlist/… "
-    "(затем список @каналов из папки)"
+    "• ссылку папки https://t.me/addlist/… — затем список @каналов из папки "
+    "(автоимпорт списка каналов Telegram не отдаёт)"
 )
 
 ONBOARD_PROMPT = (
@@ -42,8 +44,8 @@ def main_reply_keyboard() -> ReplyKeyboardMarkup:
         [
             [BTN_NEWS, BTN_NEW_ONLY],
             [BTN_SOURCES, BTN_TOPICS],
-            [BTN_SCHEDULE, BTN_MENU],
-            [BTN_HELP],
+            [BTN_SCHEDULE, BTN_PLAN],
+            [BTN_MENU, BTN_HELP],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -58,7 +60,10 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton("Источники", callback_data="m:sources"),
                 InlineKeyboardButton("Темы", callback_data="m:topics"),
             ],
-            [InlineKeyboardButton("Расписание", callback_data="m:schedule")],
+            [
+                InlineKeyboardButton("Расписание", callback_data="m:schedule"),
+                InlineKeyboardButton("Подписка", callback_data="m:plan"),
+            ],
             [InlineKeyboardButton("Помощь", callback_data="m:help")],
         ]
     )
@@ -105,6 +110,16 @@ def schedule_keyboard(*, enabled: bool) -> InlineKeyboardMarkup:
                 InlineKeyboardButton("UTC+3", callback_data="m:sched:tz:180"),
                 InlineKeyboardButton("UTC+0", callback_data="m:sched:tz:0"),
             ],
+            [InlineKeyboardButton("« Меню", callback_data="m:home")],
+        ]
+    )
+
+
+def plan_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Купить Pro ⭐", callback_data="m:buy:pro")],
+            [InlineKeyboardButton("Купить Plus ⭐", callback_data="m:buy:plus")],
             [InlineKeyboardButton("« Меню", callback_data="m:home")],
         ]
     )

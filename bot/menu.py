@@ -13,6 +13,7 @@ from bot.keyboards import (
     BTN_MENU,
     BTN_NEW_ONLY,
     BTN_NEWS,
+    BTN_PLAN,
     BTN_SCHEDULE,
     BTN_SOURCES,
     BTN_TOPICS,
@@ -23,10 +24,12 @@ from bot.keyboards import (
     digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
+    plan_keyboard,
     schedule_keyboard,
     sources_keyboard,
     topics_keyboard,
 )
+from bot.plans import format_plan_status
 from bot.schedule import format_schedule_status
 from bot.topics import parse_topic_args
 
@@ -102,7 +105,17 @@ async def send_digest_to_chat(
     if not update.effective_user or not update.effective_message:
         return
     digest: DigestService = context.application.bot_data["digest"]
+    db: Database = context.application.bot_data["db"]
     user_id = update.effective_user.id
+    allowed, ent = db.consume_digest_quota(user_id)
+    if not allowed:
+        limits = ent.limits()
+        await update.effective_message.reply_text(
+            f"Лимит сводок на сегодня ({limits.max_digests_per_day}). "
+            "Оформите Pro: /buy pro\n"
+            "Статус: /plan"
+        )
+        return
     status_text = (
         "Собираю только новое…"
         if only_unseen
@@ -183,6 +196,25 @@ async def show_sources_panel(
         await update.effective_message.reply_text(text, reply_markup=markup)
 
 
+async def show_plan_panel(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    edit: bool = False,
+) -> None:
+    clear_awaiting(context)
+    if not update.effective_user:
+        return
+    db: Database = context.application.bot_data["db"]
+    ent = db.get_entitlement(update.effective_user.id)
+    text = format_plan_status(ent)
+    markup = plan_keyboard()
+    if edit and update.callback_query and update.callback_query.message:
+        await update.callback_query.edit_message_text(text, reply_markup=markup)
+    elif update.effective_message:
+        await update.effective_message.reply_text(text, reply_markup=markup)
+
+
 async def show_schedule_panel(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -194,6 +226,19 @@ async def show_schedule_panel(
         return
     db: Database = context.application.bot_data["db"]
     user_id = update.effective_user.id
+    ent = db.get_entitlement(user_id)
+    if not ent.limits().allow_schedule:
+        text = (
+            "Расписание доступно на Trial / Pro / Plus.\n"
+            "Оформите подписку: /buy pro\n\n"
+            + format_plan_status(ent)
+        )
+        markup = plan_keyboard()
+        if edit and update.callback_query and update.callback_query.message:
+            await update.callback_query.edit_message_text(text, reply_markup=markup)
+        elif update.effective_message:
+            await update.effective_message.reply_text(text, reply_markup=markup)
+        return
     schedule = db.get_schedule(user_id)
     text = format_schedule_status(schedule)
     markup = schedule_keyboard(enabled=schedule.enabled)
@@ -293,7 +338,22 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data == "m:schedule":
         await show_schedule_panel(update, context, edit=True)
         return
+    if data == "m:plan":
+        await show_plan_panel(update, context, edit=True)
+        return
+    if data.startswith("m:buy:"):
+        plan = data.split(":")[2]
+        from bot.payments import send_plan_invoice
+
+        try:
+            await send_plan_invoice(update, context, plan)
+        except ValueError as exc:
+            await query.answer(str(exc), show_alert=True)
+        return
     if data == "m:sched:on":
+        if not db.get_entitlement(user_id).limits().allow_schedule:
+            await query.answer("Расписание доступно на Pro", show_alert=True)
+            return
         schedule = db.set_schedule(user_id, enabled=True)
         await query.edit_message_text(
             format_schedule_status(schedule),
@@ -308,6 +368,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
     if data.startswith("m:sched:h:"):
+        if not db.get_entitlement(user_id).limits().allow_schedule:
+            await query.answer("Расписание доступно на Pro", show_alert=True)
+            return
         hour = int(data.split(":")[3])
         schedule = db.set_schedule(user_id, enabled=True, hour=hour)
         await query.edit_message_text(
@@ -410,6 +473,8 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await show_topics_panel(update, context)
     elif text == BTN_SCHEDULE:
         await show_schedule_panel(update, context)
+    elif text == BTN_PLAN:
+        await show_plan_panel(update, context)
     elif text == BTN_MENU:
         await show_main_menu(update, context)
     elif text == BTN_HELP:

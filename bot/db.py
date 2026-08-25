@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
 from bot.models import Source, SourceType
+from bot.plans import TRIAL_DAYS, UserEntitlement
 from bot.schedule import UserSchedule
 
 
@@ -92,6 +93,7 @@ class Database:
                 """
             )
             self._ensure_user_schedule_columns(conn)
+            self._ensure_user_plan_columns(conn)
 
     @staticmethod
     def _ensure_user_schedule_columns(conn: sqlite3.Connection) -> None:
@@ -106,16 +108,46 @@ class Database:
             if name not in cols:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {name} {typedef}")
 
+    @staticmethod
+    def _ensure_user_plan_columns(conn: sqlite3.Connection) -> None:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+        alterations = [
+            ("plan", "TEXT NOT NULL DEFAULT 'trial'"),
+            ("plan_expires_at", "TEXT"),
+            ("trial_started_at", "TEXT"),
+            ("digests_today", "INTEGER NOT NULL DEFAULT 0"),
+            ("digest_day", "TEXT"),
+        ]
+        for name, typedef in alterations:
+            if name not in cols:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {name} {typedef}")
+
     def ensure_user(self, user_id: int) -> None:
-        now = _utc_now().isoformat()
+        now = _utc_now()
+        now_iso = now.isoformat()
+        trial_end = (now + timedelta(days=TRIAL_DAYS)).isoformat()
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO users(user_id, created_at)
-                VALUES (?, ?)
+                INSERT INTO users(
+                    user_id, created_at, plan, trial_started_at, plan_expires_at
+                )
+                VALUES (?, ?, 'trial', ?, ?)
                 ON CONFLICT(user_id) DO NOTHING
                 """,
-                (user_id, now),
+                (user_id, now_iso, now_iso, trial_end),
+            )
+            # Backfill trial fields for legacy rows.
+            conn.execute(
+                """
+                UPDATE users
+                SET trial_started_at = COALESCE(trial_started_at, ?),
+                    plan = COALESCE(NULLIF(plan, ''), 'trial'),
+                    plan_expires_at = COALESCE(plan_expires_at, ?)
+                WHERE user_id = ?
+                  AND trial_started_at IS NULL
+                """,
+                (now_iso, trial_end, user_id),
             )
 
     def get_last_digest_at(self, user_id: int) -> datetime | None:
@@ -377,9 +409,98 @@ class Database:
         due: list[UserSchedule] = []
         for row in rows:
             schedule = self._row_to_schedule(row)
-            if schedule.due_now(now):
-                due.append(schedule)
+            if not schedule.due_now(now):
+                continue
+            ent = self.get_entitlement(schedule.user_id)
+            if not ent.limits(now).allow_schedule:
+                continue
+            due.append(schedule)
         return due
+
+    def get_entitlement(self, user_id: int) -> UserEntitlement:
+        self.ensure_user(user_id)
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT user_id, plan, plan_expires_at, trial_started_at,
+                       digests_today, digest_day
+                FROM users WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        return UserEntitlement(
+            user_id=int(row["user_id"]),
+            plan=str(row["plan"] or "trial"),
+            plan_expires_at=_parse_dt(row["plan_expires_at"]),
+            trial_started_at=_parse_dt(row["trial_started_at"]),
+            digests_today=int(row["digests_today"] or 0),
+            digest_day=row["digest_day"],
+        )
+
+    def set_plan(
+        self,
+        user_id: int,
+        plan: str,
+        *,
+        expires_at: datetime | None = None,
+    ) -> UserEntitlement:
+        self.ensure_user(user_id)
+        stamp = expires_at.astimezone(timezone.utc).isoformat() if expires_at else None
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET plan = ?, plan_expires_at = ?
+                WHERE user_id = ?
+                """,
+                (plan, stamp, user_id),
+            )
+        return self.get_entitlement(user_id)
+
+    def consume_digest_quota(self, user_id: int) -> tuple[bool, UserEntitlement]:
+        """Increment today's digest counter. Returns (allowed, entitlement)."""
+        self.ensure_user(user_id)
+        today = _utc_now().date().isoformat()
+        ent = self.get_entitlement(user_id)
+        limits = ent.limits()
+        digests_today = ent.digests_today if ent.digest_day == today else 0
+        if digests_today >= limits.max_digests_per_day:
+            return False, ent
+        digests_today += 1
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET digests_today = ?, digest_day = ?
+                WHERE user_id = ?
+                """,
+                (digests_today, today, user_id),
+            )
+        return True, self.get_entitlement(user_id)
+
+    def count_users(self) -> int:
+        with self.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
+        return int(row["c"])
+
+    def count_sources(self) -> int:
+        with self.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM sources").fetchone()
+        return int(row["c"])
+
+    def count_paid_users(self) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM users
+                WHERE plan IN ('pro', 'plus')
+                """
+            ).fetchone()
+        return int(row["c"])
+
+    def delete_user_data(self, user_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
 
     @staticmethod
     def _row_to_schedule(row: sqlite3.Row) -> UserSchedule:

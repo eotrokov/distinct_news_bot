@@ -19,6 +19,7 @@ from bot.digest import parse_add_args, parse_days_arg
 from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
 from bot.menu import (
     cancel_awaiting,
+    clear_awaiting,
     get_awaiting,
     on_awaiting_text,
     on_callback,
@@ -26,6 +27,7 @@ from bot.menu import (
     send_digest_to_chat,
     set_awaiting,
     show_main_menu,
+    show_plan_panel,
     show_schedule_panel,
     show_sources_panel,
     show_topics_panel,
@@ -45,14 +47,15 @@ HELP_TEXT = """\
 Кнопки:
 • Сводка — главные новости за период (по реакциям)
 • Только новое — посты, которых ещё не было в сводках
-• Расписание — ежедневная авто-сводка
+• Расписание — ежедневная авто-сводка (Trial/Pro/Plus)
+• Подписка — план и оплата Stars
 • /menu — подробное inline-меню
 
 Команды:
 /menu — открыть меню
 /add @channel [название] — добавить канал
 /add telegram @a @b — несколько каналов сразу
-/addlist <ссылка> — папка t.me/addlist/… (затем пришлите список @каналов)
+/addlist <ссылка> — папка t.me/addlist/… (затем вручную список @каналов)
 /remove <id> — удалить канал
 /sources — список каналов
 /topic add <тема> — добавить тему-фильтр
@@ -63,19 +66,22 @@ HELP_TEXT = """\
 /news 7 — то же за 7 дней
 /news new — только новое
 /schedule — авто-сводка по расписанию
-/reset — сбросить просмотренное (чтобы «Только новое» показало их снова)
+/plan — статус подписки
+/buy pro | /buy plus — оплата Telegram Stars
+/reset — сбросить просмотренное
+/delete_me — удалить все ваши данные
 /cancel — отменить ввод
 /help — эта справка
 
-Если темы заданы, в сводку попадают только новости, где встречается хотя бы одна тема. Без тем — все новости.
+Trial 7 дней с полным доступом. Дальше Free или Pro/Plus за Stars.
 
-Источники — только публичные Telegram-каналы (@channel) или папки addlist.
+Источники — только публичные Telegram-каналы. Папка addlist: бот берёт название, каналы нужно прислать списком (@name).
 
 Примеры:
 /add bbcnews
 /add @ch1 @ch2 https://t.me/ch3
-/addlist https://t.me/addlist/_0flf9ViWOo0NjNi
-/topic add ai
+/schedule on 9
+/buy pro
 /news
 """
 
@@ -192,7 +198,8 @@ async def addlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not args:
         await update.message.reply_text(
             "Формат: /addlist https://t.me/addlist/XXXX\n"
-            "Затем пришлите список публичных каналов (@name …)."
+            "Telegram не отдаёт список каналов папки ботам — "
+            "затем пришлите публичные @username вручную."
         )
         return
     await begin_addlist_import(update, context, " ".join(args))
@@ -236,8 +243,9 @@ async def begin_addlist_import(
     )
     await status.edit_text(
         f"Папка: «{title}»\n\n"
-        "Пришлите публичные каналы из папки (@username или https://t.me/…)\n"
-        "через пробел или с новой строки.\n\n"
+        "Telegram не отдаёт список каналов из папки автоматически.\n"
+        "Пришлите публичные @username из папки вручную "
+        "(через пробел или с новой строки).\n\n"
         "Пример: @channel1 @channel2\n"
         "/cancel — отмена"
     )
@@ -355,6 +363,9 @@ async def schedule_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     db: Database = context.application.bot_data["db"]
     user_id = update.effective_user.id
+    if not db.get_entitlement(user_id).limits().allow_schedule:
+        await show_plan_panel(update, context)
+        return
     args = list(context.args or [])
     if not args:
         await show_schedule_panel(update, context)
@@ -392,6 +403,98 @@ async def schedule_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(
         format_schedule_status(schedule),
         reply_markup=schedule_keyboard(enabled=schedule.enabled),
+    )
+
+
+async def plan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await show_plan_panel(update, context)
+
+
+async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    args = list(context.args or [])
+    if not args or args[0].lower() not in {"pro", "plus"}:
+        await update.message.reply_text("Формат: /buy pro или /buy plus")
+        return
+    from bot.payments import send_plan_invoice
+
+    try:
+        await send_plan_invoice(update, context, args[0].lower())
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+
+
+async def delete_me_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    db: Database = context.application.bot_data["db"]
+    user_id = update.effective_user.id
+    db.delete_user_data(user_id)
+    clear_awaiting(context)
+    await update.message.reply_text(
+        "Все ваши данные удалены (каналы, темы, просмотренное, подписка).\n"
+        "Нажмите /start, чтобы начать заново.",
+        reply_markup=main_reply_keyboard(),
+    )
+
+
+def _require_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    from bot.config import Settings
+
+    settings: Settings = context.application.bot_data["settings"]
+    user = update.effective_user
+    return bool(user and user.id in settings.admin_user_ids)
+
+
+async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.effective_user:
+        return
+    if not _require_admin(update, context):
+        await update.message.reply_text("Недостаточно прав.")
+        return
+    args = list(context.args or [])
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Формат: /grant <user_id> <trial|free|pro|plus> [дней]"
+        )
+        return
+    try:
+        target = int(args[0])
+    except ValueError:
+        await update.message.reply_text("user_id должен быть числом")
+        return
+    plan = args[1].lower()
+    if plan not in {"trial", "free", "pro", "plus"}:
+        await update.message.reply_text("План: trial, free, pro, plus")
+        return
+    days = int(args[2]) if len(args) > 2 else 30
+    from datetime import datetime, timedelta, timezone
+
+    from bot.plans import format_plan_status
+
+    db: Database = context.application.bot_data["db"]
+    expires = None
+    if plan in {"pro", "plus", "trial"}:
+        expires = datetime.now(timezone.utc) + timedelta(days=days)
+    ent = db.set_plan(target, plan, expires_at=expires)
+    await update.message.reply_text(
+        f"Выдано user={target}\n" + format_plan_status(ent)
+    )
+
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    if not _require_admin(update, context):
+        await update.message.reply_text("Недостаточно прав.")
+        return
+    db: Database = context.application.bot_data["db"]
+    await update.message.reply_text(
+        "📊 Статистика\n"
+        f"Пользователи: {db.count_users()}\n"
+        f"Каналы: {db.count_sources()}\n"
+        f"Платящие (pro/plus): {db.count_paid_users()}"
     )
 
 
@@ -459,8 +562,20 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("news", news))
     app.add_handler(CommandHandler("digest", news))
     app.add_handler(CommandHandler("schedule", schedule_cmd))
+    app.add_handler(CommandHandler("plan", plan_cmd))
+    app.add_handler(CommandHandler("buy", buy_cmd))
+    app.add_handler(CommandHandler("delete_me", delete_me_cmd))
+    app.add_handler(CommandHandler("grant", grant_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("reset", reset_cursor))
     app.add_handler(CallbackQueryHandler(on_callback, pattern=r"^m:"))
+    from bot.payments import on_pre_checkout, on_successful_payment
+    from telegram.ext import PreCheckoutQueryHandler
+
+    app.add_handler(PreCheckoutQueryHandler(on_pre_checkout))
+    app.add_handler(
+        MessageHandler(filters.SUCCESSFUL_PAYMENT, on_successful_payment)
+    )
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_router)
     )

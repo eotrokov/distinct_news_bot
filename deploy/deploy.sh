@@ -74,8 +74,8 @@ fi
 
 echo "==> Building and restarting container (branch hint: $DEPLOY_BRANCH)"
 ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && \
-  docker image prune -af >/dev/null 2>&1 || true; \
-  docker builder prune -af >/dev/null 2>&1 || true; \
+  docker image prune -f >/dev/null 2>&1 || true; \
+  docker builder prune -f --filter until=72h >/dev/null 2>&1 || true; \
   docker compose up -d --build --remove-orphans && docker compose ps"
 
 echo "==> Recent logs"
