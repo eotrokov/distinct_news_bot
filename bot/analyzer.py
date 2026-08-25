@@ -147,8 +147,12 @@ class NewsAnalyzer:
             published = secondary.published_at
         reactions = max(int(primary.reactions or 0), int(secondary.reactions or 0))
         views = max(int(primary.views or 0), int(secondary.views or 0))
+        title = primary.title
+        if len(secondary.title or "") > len(primary.title or ""):
+            title = secondary.title
         return replace(
             primary,
+            title=title,
             urls=urls,
             url=urls[0] if urls else primary.url,
             summary=summary,

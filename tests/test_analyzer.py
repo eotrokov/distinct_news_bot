@@ -60,6 +60,23 @@ def test_deduplicate_merges_similar_titles():
     assert len(out[0].urls) == 2
 
 
+def test_deduplicate_merges_paraphrased_story_keeps_longer_title():
+    analyzer = NewsAnalyzer()
+    short = _item(
+        "⚡⚡⚡ 16-летняя девушка разбилась насмерть на питбайке по Малоярославцем!",
+        url="https://a.example/pit",
+    )
+    long = _item(
+        "⚠️ 16-ЛЕТНЯЯ ДЕВУШКА ПОГИБЛА В ДТП НА ПИТБАЙКЕ! "
+        "Смертельная авария произошла вечером в субботу, 22 августа",
+        url="https://b.example/pit",
+    )
+    out = analyzer.deduplicate([short, long])
+    assert len(out) == 1
+    assert len(out[0].urls) == 2
+    assert "22 августа" in out[0].title
+
+
 def test_sort_by_reactions_orders_like_weekly():
     analyzer = NewsAnalyzer()
     low = _item(
