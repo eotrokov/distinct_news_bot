@@ -47,7 +47,7 @@ HELP_TEXT = """\
 
 Команды:
 /menu — открыть меню
-/add <тип> <id|url> [название] — добавить источник
+/add telegram @channel [название] — добавить канал
 /add telegram @a @b — несколько каналов сразу
 /addlist <ссылка> — папка t.me/addlist/… (затем пришлите список @каналов)
 /remove <id> — удалить источник
@@ -64,18 +64,12 @@ HELP_TEXT = """\
 
 Если темы заданы, в сводку попадают только новости, где встречается хотя бы одна тема (в заголовке или тексте). Без тем — все новости.
 
-Типы источников:
-• telegram — публичный канал (@channel) или папка addlist
-• ria — лента РИА (main, politics, world, …) или URL RSS
-• rss — любой RSS/Atom URL
-• facebook — страница (нужен RSSHUB_BASE_URL) или URL RSS
-• twitter — аккаунт X/Twitter (нужен RSSHUB_BASE_URL) или URL RSS
+Источники — публичные Telegram-каналы (@channel) или папки addlist.
 
 Примеры:
 /add telegram bbcnews
 /add telegram @ch1 @ch2 https://t.me/ch3
 /addlist https://t.me/addlist/_0flf9ViWOo0NjNi
-/add ria main
 /topic add ai
 /news
 """
