@@ -216,6 +216,15 @@ class Database:
         seen = {row["fingerprint"] for row in rows}
         return set(fingerprints) - seen
 
+    def clear_seen(self, user_id: int) -> int:
+        """Remove all seen fingerprints for a user. Returns deleted row count."""
+        with self.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM seen_items WHERE user_id = ?",
+                (user_id,),
+            )
+            return int(cur.rowcount)
+
     def cleanup_seen(self, user_id: int, keep_days: int = 30) -> None:
         cutoff = datetime.now(timezone.utc).timestamp() - keep_days * 86400
         cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()

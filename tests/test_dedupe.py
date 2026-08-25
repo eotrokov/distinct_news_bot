@@ -137,6 +137,48 @@ def test_format_digest_excerpt_and_reactions():
     assert "👁 1200" in text
 
 
+def test_format_digest_only_unseen_header():
+    items = [
+        NewsItem(
+            title="Свежая новость",
+            url="https://example.com/new",
+            published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            source_type="telegram",
+            source_name="ch",
+            summary="Текст свежей новости с достаточным числом слов для сводки.",
+            reactions=5,
+        )
+    ]
+    analysis = {
+        "categories": {"🔥 Главное": items},
+        "stats": {
+            "total_processed": 1,
+            "final_count": 1,
+            "filtered_out": 0,
+            "deduped_merged": 0,
+            "only_unseen": True,
+        },
+    }
+    pages = format_digest(items, [], days=3, analysis=analysis)
+    assert "Только новое за 3 дня" in pages[0]
+
+
+def test_format_digest_only_unseen_empty():
+    analysis = {
+        "categories": {},
+        "stats": {
+            "total_processed": 2,
+            "final_count": 0,
+            "filtered_out": 0,
+            "deduped_merged": 0,
+            "only_unseen": True,
+        },
+    }
+    pages = format_digest([], [], days=3, analysis=analysis)
+    assert "нового нет" in pages[0]
+    assert "/reset" in pages[0]
+
+
 def test_format_digest_paginates_by_page_size():
     items = [
         NewsItem(

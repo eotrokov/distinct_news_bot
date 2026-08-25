@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from bot.keyboards import (
+    BTN_NEW_ONLY,
     BTN_NEWS,
+    digest_mode_keyboard,
     digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
@@ -14,9 +16,22 @@ from datetime import datetime, timezone
 
 def test_main_keyboards():
     reply = main_reply_keyboard()
-    assert BTN_NEWS in {btn.text for row in reply.keyboard for btn in row}
+    labels = {btn.text for row in reply.keyboard for btn in row}
+    assert BTN_NEWS in labels
+    assert BTN_NEW_ONLY in labels
+    assert "Сброс курсора" not in labels
     inline = main_inline_keyboard()
     assert any(btn.callback_data == "m:news" for row in inline.inline_keyboard for btn in row)
+    assert not any(
+        btn.callback_data == "m:reset" for row in inline.inline_keyboard for btn in row
+    )
+
+
+def test_digest_mode_keyboard():
+    kb = digest_mode_keyboard()
+    data = {b.callback_data for r in kb.inline_keyboard for b in r}
+    assert "m:news:top" in data
+    assert "m:news:new" in data
 
 
 def test_sources_and_topics_keyboards():

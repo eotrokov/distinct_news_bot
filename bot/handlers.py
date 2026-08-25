@@ -42,7 +42,8 @@ HELP_TEXT = """\
 Бот собирает сводку новостей из ваших Telegram-каналов без дублей.
 
 Кнопки:
-• снизу экрана — быстрые действия
+• Сводка — главные новости за период (по реакциям)
+• Только новое — посты, которых ещё не было в сводках
 • /menu — подробное inline-меню
 
 Команды:
@@ -50,19 +51,20 @@ HELP_TEXT = """\
 /add @channel [название] — добавить канал
 /add telegram @a @b — несколько каналов сразу
 /addlist <ссылка> — папка t.me/addlist/… (затем пришлите список @каналов)
-/remove <id> — удалить источник
-/sources — список источников
+/remove <id> — удалить канал
+/sources — список каналов
 /topic add <тема> — добавить тему-фильтр
 /topic del <тема> — удалить тему
 /topics — список тем
 /topic clear — сбросить все темы
-/news — сводка за период (выжимки, без дублей, по реакциям)
+/news — главные за период
 /news 7 — то же за 7 дней
-/reset — сбросить служебную точку прошлого запроса
+/news new — только новое
+/reset — сбросить просмотренное (чтобы «Только новое» показало их снова)
 /cancel — отменить ввод
 /help — эта справка
 
-Если темы заданы, в сводку попадают только новости, где встречается хотя бы одна тема (в заголовке или тексте). Без тем — все новости.
+Если темы заданы, в сводку попадают только новости, где встречается хотя бы одна тема. Без тем — все новости.
 
 Источники — только публичные Telegram-каналы (@channel) или папки addlist.
 
@@ -77,18 +79,30 @@ HELP_TEXT = """\
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = context.application.bot_data["db"]
-    if update.effective_user:
-        db.ensure_user(update.effective_user.id)
-    if update.message:
+    if not update.message or not update.effective_user:
+        return
+    user_id = update.effective_user.id
+    db.ensure_user(user_id)
+    sources = db.list_sources(user_id)
+    if not sources:
+        from bot.keyboards import ONBOARD_PROMPT
+        from bot.menu import set_awaiting
+
+        set_awaiting(context, {"kind": "onboard"})
         await update.message.reply_text(
-            "Привет! Я соберу сводку новостей без дублей.\n"
-            "Управляйте кнопками внизу или через меню.",
+            ONBOARD_PROMPT,
             reply_markup=main_reply_keyboard(),
         )
-        await update.message.reply_text(
-            "Меню:",
-            reply_markup=main_inline_keyboard(),
-        )
+        return
+
+    await update.message.reply_text(
+        "Снова рады вас видеть. Нажмите «Сводка» или «Только новое».",
+        reply_markup=main_reply_keyboard(),
+    )
+    await update.message.reply_text(
+        "Меню:",
+        reply_markup=main_inline_keyboard(),
+    )
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -336,22 +350,32 @@ async def topics_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
+    args = list(context.args or [])
+    only_unseen = False
+    days: int | None = None
+    if args and args[0].lower() in {"new", "unseen", "новое", "novoe"}:
+        only_unseen = True
+        args = args[1:]
     try:
-        days = parse_days_arg(list(context.args or []))
+        days = parse_days_arg(args)
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
-    await send_digest_to_chat(update, context, days=days)
+    await send_digest_to_chat(
+        update, context, days=days, only_unseen=only_unseen
+    )
 
 
 async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_user:
         return
     db: Database = context.application.bot_data["db"]
-    db.reset_last_digest_at(update.effective_user.id)
+    user_id = update.effective_user.id
+    cleared = db.clear_seen(user_id)
+    db.reset_last_digest_at(user_id)
     await update.message.reply_text(
-        "Служебная точка прошлого запроса сброшена. "
-        "Сводка по-прежнему берёт окно DEFAULT_DIGEST_DAYS и ранжирует по реакциям.",
+        f"Просмотренное сброшено ({cleared}). "
+        "Кнопка «Только новое» снова покажет эти посты.",
         reply_markup=main_reply_keyboard(),
     )
 
