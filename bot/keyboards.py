@@ -14,6 +14,14 @@ BTN_RESET = "Сброс курсора"
 
 REPLY_BUTTONS = {BTN_NEWS, BTN_SOURCES, BTN_TOPICS, BTN_MENU, BTN_HELP, BTN_RESET}
 
+TELEGRAM_SOURCE_PROMPT = (
+    "Пришлите публичный канал:\n"
+    "• @channel или https://t.me/channel\n"
+    "• несколько каналов через пробел/строки\n"
+    "• ссылку папки https://t.me/addlist/… "
+    "(затем список @каналов из папки)"
+)
+
 
 def main_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -46,30 +54,14 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
 def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for source in sources:
-        label = f"Удалить #{source.id} {source.source_type}:{source.title}"[:60]
+        label = f"Удалить #{source.id} {source.title}"[:60]
         rows.append(
             [InlineKeyboardButton(label, callback_data=f"m:src_del:{source.id}")]
         )
     rows.append(
-        [InlineKeyboardButton("Добавить источник", callback_data="m:src_add")]
+        [InlineKeyboardButton("Добавить канал", callback_data="m:src_add")]
     )
     rows.append([InlineKeyboardButton("« Меню", callback_data="m:home")])
-    return InlineKeyboardMarkup(rows)
-
-
-def source_type_keyboard() -> InlineKeyboardMarkup:
-    types = [
-        ("Telegram", "telegram"),
-        ("РИА", "ria"),
-        ("RSS", "rss"),
-        ("Facebook", "facebook"),
-        ("Twitter/X", "twitter"),
-    ]
-    rows = [
-        [InlineKeyboardButton(label, callback_data=f"m:src_type:{stype}")]
-        for label, stype in types
-    ]
-    rows.append([InlineKeyboardButton("« К источникам", callback_data="m:sources")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -111,18 +103,3 @@ def digest_page_keyboard(page: int, total: int) -> InlineKeyboardMarkup:
         row.append(InlineKeyboardButton("▶", callback_data=f"m:dg:{page + 1}"))
     rows = [row, [InlineKeyboardButton("« Меню", callback_data="m:home")]]
     return InlineKeyboardMarkup(rows)
-
-
-SOURCE_PROMPTS = {
-    "telegram": (
-        "Пришлите публичный канал:\n"
-        "• @channel или https://t.me/channel\n"
-        "• несколько каналов через пробел/строки\n"
-        "• ссылку папки https://t.me/addlist/… "
-        "(затем список @каналов из папки)"
-    ),
-    "ria": "Пришлите ленту РИА: main / politics / world / … или URL RSS",
-    "rss": "Пришлите URL RSS/Atom ленты",
-    "facebook": "Пришлите имя страницы Facebook, URL страницы или URL RSS",
-    "twitter": "Пришлите @user, URL профиля X/Twitter или URL RSS",
-}

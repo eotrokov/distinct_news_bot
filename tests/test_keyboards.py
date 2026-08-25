@@ -5,7 +5,6 @@ from bot.keyboards import (
     digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
-    source_type_keyboard,
     sources_keyboard,
     topics_keyboard,
 )
@@ -24,20 +23,18 @@ def test_sources_and_topics_keyboards():
     source = Source(
         id=3,
         user_id=1,
-        source_type="ria",
-        identifier="main",
-        title="РИА",
+        source_type="telegram",
+        identifier="bbcnews",
+        title="@bbcnews",
         created_at=datetime.now(timezone.utc),
     )
     sk = sources_keyboard([source])
     assert any("m:src_del:3" == b.callback_data for r in sk.inline_keyboard for b in r)
     assert any(b.callback_data == "m:src_add" for r in sk.inline_keyboard for b in r)
+    assert any(b.text == "Добавить канал" for r in sk.inline_keyboard for b in r)
 
     tk = topics_keyboard([(9, "ai")])
     assert any(b.callback_data == "m:topic_del:9" for r in tk.inline_keyboard for b in r)
-
-    types = source_type_keyboard()
-    assert any(b.callback_data == "m:src_type:telegram" for r in types.inline_keyboard for b in r)
 
 
 def test_digest_page_keyboard():

@@ -9,12 +9,12 @@ from bot.models import NewsItem
 def test_db_sources_and_seen(tmp_path):
     db = Database(str(tmp_path / "bot.sqlite3"))
     user_id = 42
-    source = db.add_source(user_id, "ria", "main", "РИА main")
+    source = db.add_source(user_id, "telegram", "bbcnews", "@bbcnews")
     assert source.id > 0
     assert len(db.list_sources(user_id)) == 1
 
     try:
-        db.add_source(user_id, "ria", "main", "dup")
+        db.add_source(user_id, "telegram", "bbcnews", "dup")
         assert False, "expected ValueError"
     except ValueError:
         pass

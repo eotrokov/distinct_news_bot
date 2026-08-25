@@ -16,12 +16,11 @@ from bot.keyboards import (
     BTN_SOURCES,
     BTN_TOPICS,
     REPLY_BUTTONS,
-    SOURCE_PROMPTS,
+    TELEGRAM_SOURCE_PROMPT,
     back_home_keyboard,
     digest_page_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
-    source_type_keyboard,
     sources_keyboard,
     topics_keyboard,
 )
@@ -137,7 +136,9 @@ def sources_text(db: Database, user_id: int) -> str:
         )
     lines = ["Ваши источники (нажмите, чтобы удалить):"]
     for s in sources:
-        lines.append(f"#{s.id} [{s.source_type}] {s.title}\n  {s.identifier}")
+        lines.append(f"#{s.id} {s.title}\n  {s.identifier}")
+        if s.source_type != "telegram":
+            lines[-1] += f"\n  ⚠ устаревший тип [{s.source_type}] — удалите"
     return "\n".join(lines)
 
 
@@ -263,22 +264,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             reply_markup=back_home_keyboard(),
         )
         return
-    if data == "m:src_add":
+    if data == "m:src_add" or data.startswith("m:src_type:"):
+        # Legacy m:src_type:* callbacks still open the Telegram add flow.
         clear_awaiting(context)
+        set_awaiting(context, {"kind": "source", "type": "telegram"})
         await query.edit_message_text(
-            "Выберите тип источника:",
-            reply_markup=source_type_keyboard(),
-        )
-        return
-    if data.startswith("m:src_type:"):
-        source_type = data.split(":", 2)[2]
-        if source_type not in SOURCE_PROMPTS:
-            await query.answer("Неизвестный тип", show_alert=True)
-            return
-        set_awaiting(context, {"kind": "source", "type": source_type})
-        prompt = SOURCE_PROMPTS[source_type]
-        await query.edit_message_text(
-            f"{prompt}\n\nИли /cancel чтобы отменить.",
+            f"{TELEGRAM_SOURCE_PROMPT}\n\nИли /cancel чтобы отменить.",
             reply_markup=back_home_keyboard(),
         )
         return
@@ -388,36 +379,38 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
 
         if kind == "source":
-            source_type = str(awaiting.get("type"))
-            if source_type == "telegram":
-                from bot.addlist import extract_addlist_slug, parse_telegram_handles
-                from bot.handlers import begin_addlist_import
-                from bot.sources_ops import (
-                    add_telegram_from_text,
-                    format_add_report,
+            from bot.addlist import extract_addlist_slug, parse_telegram_handles
+            from bot.handlers import begin_addlist_import
+            from bot.sources_ops import (
+                add_single_source,
+                add_telegram_from_text,
+                format_add_report,
+            )
+
+            if extract_addlist_slug(text) and "addlist" in text.lower():
+                clear_awaiting(context)
+                await begin_addlist_import(update, context, text)
+                return
+
+            handles = parse_telegram_handles(text)
+            if len(handles) > 1:
+                added, skipped = add_telegram_from_text(db, user_id, text)
+                clear_awaiting(context)
+                await update.message.reply_text(
+                    format_add_report(
+                        folder_title=None, added=added, skipped=skipped
+                    ),
+                    reply_markup=sources_keyboard(db.list_sources(user_id)),
                 )
+                return
 
-                if extract_addlist_slug(text) and "addlist" in text.lower():
-                    clear_awaiting(context)
-                    await begin_addlist_import(update, context, text)
-                    return
-
-                handles = parse_telegram_handles(text)
-                if len(handles) > 1:
-                    added, skipped = add_telegram_from_text(db, user_id, text)
-                    clear_awaiting(context)
-                    await update.message.reply_text(
-                        format_add_report(
-                            folder_title=None, added=added, skipped=skipped
-                        ),
-                        reply_markup=sources_keyboard(db.list_sources(user_id)),
-                    )
-                    return
-
-            source = _add_source_from_text(db, user_id, source_type, text)
+            source_type, identifier, title = parse_add_args(
+                ["telegram", *text.split()]
+            )
+            source = add_single_source(db, user_id, source_type, identifier, title)
             clear_awaiting(context)
             await update.message.reply_text(
-                f"Добавлен источник #{source.id}: [{source.source_type}] {source.title}\n"
+                f"Добавлен канал #{source.id}: {source.title}\n"
                 f"{source.identifier}",
                 reply_markup=sources_keyboard(db.list_sources(user_id)),
             )
@@ -449,22 +442,6 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
     except ValueError as exc:
         await update.message.reply_text(f"{exc}\nПопробуйте ещё раз или /cancel")
-
-
-def _add_source_from_text(
-    db: Database, user_id: int, source_type: str, raw: str
-):
-    from bot.sources_ops import add_single_source
-
-    # Reuse /add parser with synthetic args.
-    source_type, identifier, title = parse_add_args([source_type, *raw.split()])
-    # For rss/facebook/twitter URLs with spaces broken by split — if raw is a URL, use it whole.
-    if source_type in {"rss", "facebook", "twitter"} and (
-        raw.startswith("http://") or raw.startswith("https://")
-    ):
-        identifier = raw.strip()
-        title = title if title and not title.startswith("http") else identifier[:60]
-    return add_single_source(db, user_id, source_type, identifier, title)
 
 
 async def cancel_awaiting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
