@@ -8,6 +8,7 @@ from typing import Any
 
 from bot.dedupe import are_near_duplicates
 from bot.models import NewsItem
+from bot.seo_prompt import SEO_CATEGORIES, SEO_RELEVANCE_KEYWORDS
 from bot.summarize import clean_and_summarize
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,18 @@ _NOISE_REGEXES = [
         r"\bdiscount\b",
         r"\bcoupon\b",
         r"\bbuy\s+now\b",
+        # SEO-specific promo / hiring / courses
+        r"куп(ить|лю|им)\s+ссылк",
+        r"прода(м|жа|ём|ем)\s+ссылк",
+        r"нативн\w*\s+интеграц",
+        r"ищу\s+(seo|сео|специалист|менеджер|линкбилдер)",
+        r"ваканси",
+        r"требуется\s+(seo|сео|специалист)",
+        r"запись\s+на\s+курс",
+        r"прода(жа|ём|ем)\s+курс",
+        r"наш\s+курс",
+        r"интенсив\s+для",
+        r"стоимость\s+размещен",
     )
 ]
 
@@ -64,6 +77,12 @@ STOP_PHRASES = [
     "партнёрский материал",
     "наш курс",
     "запись на курс",
+    "ищу специалиста",
+    "ищу seo",
+    "ищу сео",
+    "купить ссылки",
+    "продажа ссылок",
+    "нативная интеграция",
     "buy now",
     "limited offer",
     "subscribe now",
@@ -84,10 +103,13 @@ BLOCK_WORDS = [
     "реклама",
     "erid",
     "coupon",
+    "вакансия",
+    "инфобиз",
 ]
 
 _STOP_PHRASES = [p.lower() for p in STOP_PHRASES]
 _BLOCK_WORDS = [w.lower() for w in BLOCK_WORDS]
+_RELEVANCE = [kw.lower() for kw in SEO_RELEVANCE_KEYWORDS]
 
 
 def item_urls(item: NewsItem) -> list[str]:
@@ -100,13 +122,39 @@ def item_urls(item: NewsItem) -> list[str]:
     return urls
 
 
+def _blob(item: NewsItem) -> str:
+    return f"{item.title or ''} {item.summary or item.body or ''}".lower()
+
+
+def is_seo_relevant(item: NewsItem) -> bool:
+    blob = _blob(item)
+    return any(kw in blob for kw in _RELEVANCE)
+
+
+def categorize_item(item: NewsItem) -> str | None:
+    """Return the best-matching SEO category, or None if none match."""
+    blob = _blob(item)
+    best_name: str | None = None
+    best_score = 0
+    for category, keywords in SEO_CATEGORIES.items():
+        hits = [kw for kw in keywords if kw.lower() in blob]
+        if not hits:
+            continue
+        # Prefer more / longer keyword hits so "ahrefs"+"dr" beats bare "dr ".
+        score = sum(len(kw) for kw in hits) + len(hits) * 2
+        if score > best_score:
+            best_score = score
+            best_name = category
+    return best_name
+
+
 class NewsAnalyzer:
-    """Same pipeline as weekly digests: drop noise, merge dupes, rank by reactions."""
+    """SEO digest pipeline: noise filter, relevance, dedupe, categorize, rank."""
 
     def filter_noise(self, items: list[NewsItem]) -> list[NewsItem]:
         kept: list[NewsItem] = []
         for item in items:
-            blob = f"{item.title or ''} {item.summary or item.body or ''}".lower()
+            blob = _blob(item)
             words = [w for w in re.split(r"\s+", blob) if w]
             if len(words) < MIN_WORDS:
                 continue
@@ -118,6 +166,9 @@ class NewsAnalyzer:
                 continue
             kept.append(item)
         return kept
+
+    def filter_relevant(self, items: list[NewsItem]) -> list[NewsItem]:
+        return [item for item in items if is_seo_relevant(item)]
 
     def deduplicate(self, items: list[NewsItem]) -> list[NewsItem]:
         unique: list[NewsItem] = []
@@ -133,6 +184,13 @@ class NewsAnalyzer:
         return unique
 
     def _merge_items(self, primary: NewsItem, secondary: NewsItem) -> NewsItem:
+        # Prefer the variant with more reactions (then views), per SEO digest rules.
+        if (int(secondary.reactions or 0), int(secondary.views or 0)) > (
+            int(primary.reactions or 0),
+            int(primary.views or 0),
+        ):
+            primary, secondary = secondary, primary
+
         urls = item_urls(primary)
         for url in item_urls(secondary):
             if url not in urls:
@@ -172,18 +230,35 @@ class NewsAnalyzer:
 
         return sorted(items, key=score, reverse=True)
 
+    def categorize(self, items: list[NewsItem]) -> dict[str, list[NewsItem]]:
+        buckets: dict[str, list[NewsItem]] = {name: [] for name in SEO_CATEGORIES}
+        for item in items:
+            category = categorize_item(item)
+            if category is None:
+                # Relevant but no specific block — put under Google/Search as default
+                # only if it still looks search-related; else skip orphan.
+                continue
+            buckets[category].append(item)
+        # Drop empty blocks; keep declared order.
+        return {
+            name: self.sort_by_reactions(cat_items)
+            for name, cat_items in buckets.items()
+            if cat_items
+        }
+
     def process(
         self,
         items: list[NewsItem],
         period: int | None = None,
         *,
-        max_sentences: int = 3,
+        max_sentences: int = 2,
     ) -> dict[str, Any]:
         total = len(items)
         cleaned = self.filter_noise(items)
-        filtered_out = total - len(cleaned)
-        deduped = self.deduplicate(cleaned)
-        deduped_merged = len(cleaned) - len(deduped)
+        relevant = self.filter_relevant(cleaned)
+        filtered_out = total - len(relevant)
+        deduped = self.deduplicate(relevant)
+        deduped_merged = len(relevant) - len(deduped)
 
         with_summaries: list[NewsItem] = []
         for item in deduped:
@@ -201,13 +276,13 @@ class NewsAnalyzer:
                 )
             )
 
-        ranked = self.sort_by_reactions(with_summaries)
-        category = "🔥 Главное за неделю" if period == 7 else "🔥 Главное"
+        categories = self.categorize(with_summaries)
+        final_count = sum(len(v) for v in categories.values())
         stats = {
             "total_processed": total,
             "filtered_out": filtered_out,
             "deduped_merged": deduped_merged,
-            "final_count": len(ranked),
+            "final_count": final_count,
             "period_days": period,
             "sort_by": "reactions",
         }
@@ -216,7 +291,7 @@ class NewsAnalyzer:
             total,
             filtered_out,
             deduped_merged,
-            len(ranked),
+            final_count,
             period,
         )
-        return {"categories": {category: ranked} if ranked else {}, "stats": stats}
+        return {"categories": categories, "stats": stats}

@@ -22,6 +22,22 @@ def _parse_admin_ids(raw: str | None) -> frozenset[int]:
     return frozenset(ids)
 
 
+def _resolve_ai_api_key() -> str | None:
+    provider = (_env("AI_PROVIDER", "gemini") or "gemini").lower()
+    if provider == "groq":
+        return _env("GROQ_API_KEY")
+    return _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
+
+
+def _resolve_ai_model() -> str:
+    provider = (_env("AI_PROVIDER", "gemini") or "gemini").lower()
+    if _env("AI_MODEL"):
+        return _env("AI_MODEL") or ""
+    if provider == "groq":
+        return "llama-3.3-70b-versatile"
+    return "gemini-2.0-flash"
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
@@ -38,6 +54,12 @@ class Settings:
     admin_user_ids: frozenset[int]
     pro_stars_price: int
     plus_stars_price: int
+    ai_summary_enabled: bool
+    ai_provider: str
+    ai_api_key: str | None
+    ai_model: str
+    ai_max_concurrent: int
+    ai_timeout_seconds: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -68,9 +90,18 @@ class Settings:
             default_lookback_hours=lookback_hours,
             default_digest_days=digest_days,
             summary_max_sentences=max(
-                1, int(_env("SUMMARY_MAX_SENTENCES", "3") or "3")
+                2, int(_env("SUMMARY_MAX_SENTENCES", "2") or "2")
             ),
             admin_user_ids=_parse_admin_ids(_env("ADMIN_USER_IDS")),
             pro_stars_price=max(1, int(_env("PRO_STARS_PRICE", "350") or "350")),
             plus_stars_price=max(1, int(_env("PLUS_STARS_PRICE", "700") or "700")),
+            ai_summary_enabled=_env("AI_SUMMARY_ENABLED", "0")
+            not in {"0", "false", "False", "no", "off"},
+            ai_provider=(_env("AI_PROVIDER", "gemini") or "gemini").lower(),
+            ai_api_key=_resolve_ai_api_key(),
+            ai_model=_resolve_ai_model(),
+            ai_max_concurrent=max(
+                1, min(10, int(_env("AI_MAX_CONCURRENT", "4") or "4"))
+            ),
+            ai_timeout_seconds=float(_env("AI_TIMEOUT_SECONDS", "15") or "15"),
         )

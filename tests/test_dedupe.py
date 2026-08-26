@@ -121,20 +121,24 @@ def test_format_digest_excerpt_and_reactions():
             url="https://example.com/post/1",
             published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
             source_type="telegram",
-            source_name="РИА",
-            summary="Длинный текст поста про событие и детали для читателя ленты.",
+            source_name="SEO",
+            summary=(
+                "Google подтвердил сбой в выдаче. "
+                "Ошибка исправлена и не требует действий вебмастеров."
+            ),
             reactions=42,
             views=1200,
         )
     ]
     chunks = format_digest(items, [], days=7)
     text = chunks[0]
-    assert "Главные новости за 7 дней (по реакциям)" in text
-    assert "<b>" in text
+    assert "SEO-дайджест за 7 дней (по реакциям)" in text
+    assert "<b>🔍 Google и Поиск</b>" in text
     assert "источник" in text
     assert "https://example.com/post/1" in text
-    assert "❤️ 42" in text
-    assert "👁 1200" in text
+    assert "Google подтвердил сбой" in text
+    # Engagement counters are not shown in the SEO digest item body.
+    assert "❤️ 42" not in text
 
 
 def test_format_digest_only_unseen_header():
@@ -150,7 +154,7 @@ def test_format_digest_only_unseen_header():
         )
     ]
     analysis = {
-        "categories": {"🔥 Главное": items},
+        "categories": {"🔍 Google и Поиск": items},
         "stats": {
             "total_processed": 1,
             "final_count": 1,
@@ -160,7 +164,7 @@ def test_format_digest_only_unseen_header():
         },
     }
     pages = format_digest(items, [], days=3, analysis=analysis)
-    assert "Только новое за 3 дня" in pages[0]
+    assert "SEO-дайджест: только новое за 3 дня" in pages[0]
 
 
 def test_format_digest_only_unseen_empty():
