@@ -25,6 +25,21 @@ def setup_logging(level: str) -> None:
 
 async def _post_init(app: Application) -> None:
     setup_schedule_jobs(app)
+    try:
+        from telegram import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeDefault
+
+        commands = [
+            BotCommand("news", "SEO-дайджест"),
+            BotCommand("add", "Добавить канал"),
+            BotCommand("sources", "Список каналов"),
+            BotCommand("schedule", "Авто-сводка"),
+            BotCommand("menu", "Меню"),
+            BotCommand("help", "Справка"),
+        ]
+        await app.bot.set_my_commands(commands, scope=BotCommandScopeDefault())
+        await app.bot.set_my_commands(commands, scope=BotCommandScopeAllGroupChats())
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Failed to set bot commands")
 
 
 async def _post_shutdown(app: Application) -> None:
@@ -60,6 +75,7 @@ def main() -> None:
             "message",
             "callback_query",
             "pre_checkout_query",
+            "my_chat_member",
         ]
     )
 

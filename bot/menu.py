@@ -29,6 +29,13 @@ from bot.keyboards import (
     sources_keyboard,
     topics_keyboard,
 )
+from bot.chat_scope import (
+    group_buy_hint,
+    group_manage_denied_text,
+    is_private_chat,
+    user_can_manage,
+    workspace_id,
+)
 from bot.plans import format_plan_status
 from bot.schedule import format_schedule_status
 from bot.topics import parse_topic_args
@@ -37,6 +44,30 @@ logger = logging.getLogger(__name__)
 
 AWAITING_KEY = "awaiting"
 DIGEST_SESSIONS_KEY = "digest_sessions"
+
+
+def _reply_kb(update: Update):
+    """Reply keyboard only in private chats."""
+    if is_private_chat(update.effective_chat):
+        return main_reply_keyboard()
+    return None
+
+
+async def _require_manage(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, *, alert: bool = False
+) -> bool:
+    if await user_can_manage(update, context):
+        return True
+    msg = group_manage_denied_text()
+    if alert and update.callback_query:
+        await update.callback_query.answer(msg, show_alert=True)
+    elif update.effective_message:
+        await update.effective_message.reply_text(msg)
+    return False
+
+
+def _ws(update: Update) -> int | None:
+    return workspace_id(update)
 
 MENU_TEXT = (
     "Управление ботом кнопками.\n"
@@ -58,17 +89,17 @@ def get_awaiting(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
 
 
 def _store_digest_pages(
-    context: ContextTypes.DEFAULT_TYPE, user_id: int, pages: list[str]
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int, pages: list[str]
 ) -> None:
     sessions = context.application.bot_data.setdefault(DIGEST_SESSIONS_KEY, {})
-    sessions[user_id] = {"pages": pages, "page": 0}
+    sessions[chat_id] = {"pages": pages, "page": 0}
 
 
 def _get_digest_pages(
-    context: ContextTypes.DEFAULT_TYPE, user_id: int
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int
 ) -> list[str] | None:
     sessions = context.application.bot_data.get(DIGEST_SESSIONS_KEY) or {}
-    session = sessions.get(user_id)
+    session = sessions.get(chat_id)
     if not isinstance(session, dict):
         return None
     pages = session.get("pages")
@@ -83,15 +114,21 @@ async def show_main_menu(
 ) -> None:
     clear_awaiting(context)
     text = MENU_TEXT
+    if not is_private_chat(update.effective_chat):
+        text = (
+            "Меню для этого чата. Каналы и расписание общие для группы.\n"
+            "Управлять настройками могут администраторы."
+        )
     markup = main_inline_keyboard()
     if edit and update.callback_query and update.callback_query.message:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
         return
     if update.effective_message:
-        await update.effective_message.reply_text(
-            "Быстрые кнопки внизу экрана.",
-            reply_markup=main_reply_keyboard(),
-        )
+        if is_private_chat(update.effective_chat):
+            await update.effective_message.reply_text(
+                "Быстрые кнопки внизу экрана.",
+                reply_markup=main_reply_keyboard(),
+            )
         await update.effective_message.reply_text(text, reply_markup=markup)
 
 
@@ -104,16 +141,23 @@ async def send_digest_to_chat(
 ) -> None:
     if not update.effective_user or not update.effective_message:
         return
+    chat_id = _ws(update)
+    if chat_id is None:
+        return
     digest: DigestService = context.application.bot_data["digest"]
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
-    allowed, ent = db.consume_digest_quota(user_id)
+    db.ensure_user(chat_id)
+    allowed, ent = db.consume_digest_quota(chat_id)
     if not allowed:
         limits = ent.limits()
+        buy_hint = (
+            "Оформите Pro: /buy pro"
+            if is_private_chat(update.effective_chat)
+            else group_buy_hint()
+        )
         await update.effective_message.reply_text(
-            f"Лимит сводок на сегодня ({limits.max_digests_per_day}). "
-            "Оформите Pro: /buy pro\n"
-            "Статус: /plan"
+            f"Лимит сводок на сегодня ({limits.max_digests_per_day}).\n"
+            f"{buy_hint}\nСтатус: /plan"
         )
         return
     status_text = (
@@ -124,18 +168,18 @@ async def send_digest_to_chat(
     status = await update.effective_message.reply_text(status_text)
     try:
         items, errors, topics, days_used, analysis = await digest.collect_for_user(
-            user_id, days=days, only_unseen=only_unseen
+            chat_id, days=days, only_unseen=only_unseen
         )
     except Exception:  # noqa: BLE001
-        logger.exception("Digest failed for user %s", user_id)
+        logger.exception("Digest failed for chat %s", chat_id)
         await status.edit_text("Не удалось собрать сводку. Попробуйте позже.")
         return
 
     pages = digest.format_digest(
         analysis, days_used, errors=errors, topics=topics
     )
-    _store_digest_pages(context, user_id, pages)
-    digest.mark_digest_delivered(user_id, items)
+    _store_digest_pages(context, chat_id, pages)
+    digest.mark_digest_delivered(chat_id, items)
     markup = (
         digest_page_keyboard(0, len(pages))
         if len(pages) > 1
@@ -154,9 +198,9 @@ def sources_text(db: Database, user_id: int) -> str:
     if not sources:
         return (
             "Каналов пока нет.\n"
-            "Нажмите «Добавить канал» или пришлите @channel"
+            "Добавьте: /add @channel или кнопка «Добавить канал»"
         )
-    lines = ["Ваши каналы (нажмите, чтобы удалить):"]
+    lines = ["Каналы этого чата (нажмите, чтобы удалить):"]
     for s in sources:
         lines.append(f"#{s.id} {s.title}\n  {s.identifier}")
         if s.source_type != "telegram":
@@ -184,12 +228,13 @@ async def show_sources_panel(
     edit: bool = False,
 ) -> None:
     clear_awaiting(context)
-    if not update.effective_user:
+    chat_id = _ws(update)
+    if chat_id is None:
         return
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
-    text = sources_text(db, user_id)
-    markup = sources_keyboard(db.list_sources(user_id))
+    db.ensure_user(chat_id)
+    text = sources_text(db, chat_id)
+    markup = sources_keyboard(db.list_sources(chat_id))
     if edit and update.callback_query and update.callback_query.message:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
     elif update.effective_message:
@@ -203,12 +248,18 @@ async def show_plan_panel(
     edit: bool = False,
 ) -> None:
     clear_awaiting(context)
-    if not update.effective_user:
+    chat_id = _ws(update)
+    if chat_id is None:
         return
     db: Database = context.application.bot_data["db"]
-    ent = db.get_entitlement(update.effective_user.id)
+    db.ensure_user(chat_id)
+    ent = db.get_entitlement(chat_id)
     text = format_plan_status(ent)
-    markup = plan_keyboard()
+    if not is_private_chat(update.effective_chat):
+        text += "\n\n" + group_buy_hint()
+        markup = back_home_keyboard()
+    else:
+        markup = plan_keyboard()
     if edit and update.callback_query and update.callback_query.message:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
     elif update.effective_message:
@@ -222,24 +273,33 @@ async def show_schedule_panel(
     edit: bool = False,
 ) -> None:
     clear_awaiting(context)
-    if not update.effective_user:
+    chat_id = _ws(update)
+    if chat_id is None:
         return
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
-    ent = db.get_entitlement(user_id)
+    db.ensure_user(chat_id)
+    ent = db.get_entitlement(chat_id)
     if not ent.limits().allow_schedule:
         text = (
             "Расписание доступно на Trial / Pro / Plus.\n"
-            "Оформите подписку: /buy pro\n\n"
+            + (
+                "Оформите подписку: /buy pro\n\n"
+                if is_private_chat(update.effective_chat)
+                else group_buy_hint() + "\n\n"
+            )
             + format_plan_status(ent)
         )
-        markup = plan_keyboard()
+        markup = (
+            plan_keyboard()
+            if is_private_chat(update.effective_chat)
+            else back_home_keyboard()
+        )
         if edit and update.callback_query and update.callback_query.message:
             await update.callback_query.edit_message_text(text, reply_markup=markup)
         elif update.effective_message:
             await update.effective_message.reply_text(text, reply_markup=markup)
         return
-    schedule = db.get_schedule(user_id)
+    schedule = db.get_schedule(chat_id)
     text = format_schedule_status(schedule)
     markup = schedule_keyboard(enabled=schedule.enabled)
     if edit and update.callback_query and update.callback_query.message:
@@ -255,12 +315,13 @@ async def show_topics_panel(
     edit: bool = False,
 ) -> None:
     clear_awaiting(context)
-    if not update.effective_user:
+    chat_id = _ws(update)
+    if chat_id is None:
         return
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
-    text = topics_text(db, user_id)
-    markup = topics_keyboard(db.list_topic_rows(user_id))
+    db.ensure_user(chat_id)
+    text = topics_text(db, chat_id)
+    markup = topics_keyboard(db.list_topic_rows(chat_id))
     if edit and update.callback_query and update.callback_query.message:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
     elif update.effective_message:
@@ -273,8 +334,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     data = query.data or ""
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
-    db.ensure_user(user_id)
+    chat_id = _ws(update)
+    if chat_id is None:
+        await query.answer()
+        return
+    db.ensure_user(chat_id)
 
     if data == "m:dg:noop":
         await query.answer()
@@ -286,7 +350,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         except (IndexError, ValueError):
             await query.answer()
             return
-        pages = _get_digest_pages(context, user_id)
+        pages = _get_digest_pages(context, chat_id)
         if not pages:
             await query.answer(
                 "Сводка устарела — нажмите «Сводка» ещё раз.",
@@ -296,8 +360,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.answer()
         page = max(0, min(page, len(pages) - 1))
         sessions = context.application.bot_data.get(DIGEST_SESSIONS_KEY) or {}
-        if user_id in sessions:
-            sessions[user_id]["page"] = page
+        if chat_id in sessions:
+            sessions[chat_id]["page"] = page
         try:
             await query.edit_message_text(
                 pages[page],
@@ -306,7 +370,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 reply_markup=digest_page_keyboard(page, len(pages)),
             )
         except Exception:  # noqa: BLE001
-            logger.exception("Failed to paginate digest for user %s", user_id)
+            logger.exception("Failed to paginate digest for chat %s", chat_id)
         return
 
     await query.answer()
@@ -342,6 +406,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await show_plan_panel(update, context, edit=True)
         return
     if data.startswith("m:buy:"):
+        if not is_private_chat(update.effective_chat):
+            await query.answer(group_buy_hint(), show_alert=True)
+            return
         plan = data.split(":")[2]
         from bot.payments import send_plan_invoice
 
@@ -351,36 +418,64 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await query.answer(str(exc), show_alert=True)
         return
     if data == "m:sched:on":
-        if not db.get_entitlement(user_id).limits().allow_schedule:
+        if not await _require_manage(update, context, alert=True):
+            return
+        if not db.get_entitlement(chat_id).limits().allow_schedule:
             await query.answer("Расписание доступно на Pro", show_alert=True)
             return
-        schedule = db.set_schedule(user_id, enabled=True)
+        schedule = db.set_schedule(chat_id, enabled=True)
         await query.edit_message_text(
             format_schedule_status(schedule),
             reply_markup=schedule_keyboard(enabled=schedule.enabled),
         )
         return
     if data == "m:sched:off":
-        schedule = db.set_schedule(user_id, enabled=False)
+        if not await _require_manage(update, context, alert=True):
+            return
+        schedule = db.set_schedule(chat_id, enabled=False)
         await query.edit_message_text(
             format_schedule_status(schedule),
             reply_markup=schedule_keyboard(enabled=schedule.enabled),
         )
         return
     if data.startswith("m:sched:h:"):
-        if not db.get_entitlement(user_id).limits().allow_schedule:
+        if not await _require_manage(update, context, alert=True):
+            return
+        if not db.get_entitlement(chat_id).limits().allow_schedule:
             await query.answer("Расписание доступно на Pro", show_alert=True)
             return
         hour = int(data.split(":")[3])
-        schedule = db.set_schedule(user_id, enabled=True, hour=hour)
+        schedule = db.set_schedule(chat_id, enabled=True, hour=hour)
+        await query.edit_message_text(
+            format_schedule_status(schedule),
+            reply_markup=schedule_keyboard(enabled=schedule.enabled),
+        )
+        return
+    if data.startswith("m:sched:t:"):
+        if not await _require_manage(update, context, alert=True):
+            return
+        if not db.get_entitlement(chat_id).limits().allow_schedule:
+            await query.answer("Расписание доступно на Pro", show_alert=True)
+            return
+        parts = data.split(":")
+        hour = int(parts[3])
+        minute = int(parts[4]) if len(parts) > 4 else 0
+        kwargs = {"enabled": True, "hour": hour}
+        # minute support may land from morning-digest PR; ignore if unavailable
+        try:
+            schedule = db.set_schedule(chat_id, minute=minute, **kwargs)
+        except TypeError:
+            schedule = db.set_schedule(chat_id, **kwargs)
         await query.edit_message_text(
             format_schedule_status(schedule),
             reply_markup=schedule_keyboard(enabled=schedule.enabled),
         )
         return
     if data.startswith("m:sched:tz:"):
+        if not await _require_manage(update, context, alert=True):
+            return
         offset = int(data.split(":")[3])
-        schedule = db.set_schedule(user_id, tz_offset_minutes=offset)
+        schedule = db.set_schedule(chat_id, tz_offset_minutes=offset)
         await query.edit_message_text(
             format_schedule_status(schedule),
             reply_markup=schedule_keyboard(enabled=schedule.enabled),
@@ -393,10 +488,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.edit_message_text(HELP_TEXT, reply_markup=back_home_keyboard())
         return
     if data == "m:reset":
-        # Legacy callback: clear seen items so "Только новое" can show them again.
+        if not await _require_manage(update, context, alert=True):
+            return
         clear_awaiting(context)
-        cleared = db.clear_seen(user_id)
-        db.reset_last_digest_at(user_id)
+        cleared = db.clear_seen(chat_id)
+        db.reset_last_digest_at(chat_id)
         await query.edit_message_text(
             f"Просмотренное сброшено ({cleared}). "
             "«Только новое» снова покажет эти посты.",
@@ -404,49 +500,65 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
     if data == "m:src_add" or data.startswith("m:src_type:"):
-        # Legacy m:src_type:* callbacks still open the Telegram add flow.
+        if not await _require_manage(update, context, alert=True):
+            return
         clear_awaiting(context)
         set_awaiting(context, {"kind": "source", "type": "telegram"})
-        await query.edit_message_text(
-            f"{TELEGRAM_SOURCE_PROMPT}\n\nИли /cancel чтобы отменить.",
-            reply_markup=back_home_keyboard(),
+        prompt = (
+            f"{TELEGRAM_SOURCE_PROMPT}\n\nИли /cancel чтобы отменить."
+            if is_private_chat(update.effective_chat)
+            else (
+                "В группе удобнее командой:\n"
+                "/add @channel\n"
+                "Несколько: /add @ch1 @ch2\n\n/cancel — отмена."
+            )
         )
+        await query.edit_message_text(prompt, reply_markup=back_home_keyboard())
         return
     if data.startswith("m:src_del:"):
+        if not await _require_manage(update, context, alert=True):
+            return
         source_id = int(data.split(":")[2])
-        ok = db.remove_source(user_id, source_id)
+        ok = db.remove_source(chat_id, source_id)
         note = f"Источник #{source_id} удалён.\n\n" if ok else "Источник не найден.\n\n"
-        text = note + sources_text(db, user_id)
+        text = note + sources_text(db, chat_id)
         await query.edit_message_text(
-            text, reply_markup=sources_keyboard(db.list_sources(user_id))
+            text, reply_markup=sources_keyboard(db.list_sources(chat_id))
         )
         return
     if data == "m:topic_add":
+        if not await _require_manage(update, context, alert=True):
+            return
         set_awaiting(context, {"kind": "topic"})
         await query.edit_message_text(
             "Пришлите тему или несколько через запятую/пробел.\n"
-            "Пример: ai\nПример: marketing finance\n\n/cancel — отмена.",
+            "В группе также: /topic add ai\n"
+            "Пример: marketing finance\n\n/cancel — отмена.",
             reply_markup=back_home_keyboard(),
         )
         return
     if data.startswith("m:topic_del:"):
+        if not await _require_manage(update, context, alert=True):
+            return
         topic_id = int(data.split(":")[2])
-        removed = db.remove_topic_by_id(user_id, topic_id)
+        removed = db.remove_topic_by_id(chat_id, topic_id)
         note = (
             f"Тема «{removed}» удалена.\n\n"
             if removed
             else "Тема не найдена.\n\n"
         )
-        text = note + topics_text(db, user_id)
+        text = note + topics_text(db, chat_id)
         await query.edit_message_text(
-            text, reply_markup=topics_keyboard(db.list_topic_rows(user_id))
+            text, reply_markup=topics_keyboard(db.list_topic_rows(chat_id))
         )
         return
     if data == "m:topic_clear":
-        count = db.clear_topics(user_id)
+        if not await _require_manage(update, context, alert=True):
+            return
+        count = db.clear_topics(chat_id)
         await query.edit_message_text(
-            f"Сброшено тем: {count}.\n\n" + topics_text(db, user_id),
-            reply_markup=topics_keyboard(db.list_topic_rows(user_id)),
+            f"Сброшено тем: {count}.\n\n" + topics_text(db, chat_id),
+            reply_markup=topics_keyboard(db.list_topic_rows(chat_id)),
         )
         return
 
@@ -454,14 +566,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_user or not update.message.text:
         return
+    # Reply keyboard is private-only; ignore stray presses in groups.
+    if not is_private_chat(update.effective_chat):
+        return
     text = update.message.text.strip()
     if text not in REPLY_BUTTONS:
         return
 
-    # Reply buttons cancel any pending input.
     clear_awaiting(context)
+    chat_id = _ws(update)
+    if chat_id is None:
+        return
     db: Database = context.application.bot_data["db"]
-    db.ensure_user(update.effective_user.id)
+    db.ensure_user(chat_id)
 
     if text == BTN_NEWS:
         await send_digest_to_chat(update, context, only_unseen=False)
@@ -480,7 +597,7 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif text == BTN_HELP:
         from bot.handlers import HELP_TEXT
 
-        await update.message.reply_text(HELP_TEXT, reply_markup=main_reply_keyboard())
+        await update.message.reply_text(HELP_TEXT, reply_markup=_reply_kb(update))
 
 
 async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -496,9 +613,16 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not awaiting:
         return
 
+    chat_id = _ws(update)
+    if chat_id is None:
+        return
+    if not await _require_manage(update, context):
+        return
+
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
+    db.ensure_user(chat_id)
     kind = awaiting.get("kind")
+    kb = _reply_kb(update)
 
     try:
         if kind == "onboard":
@@ -516,17 +640,17 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 await update.message.reply_text(
                     "Не нашёл каналов. Пришлите @name или https://t.me/name\n"
                     "Или /cancel чтобы отменить.",
-                    reply_markup=main_reply_keyboard(),
+                    reply_markup=kb,
                 )
                 return
 
-            added, skipped = add_telegram_from_text(db, user_id, text)
+            added, skipped = add_telegram_from_text(db, chat_id, text)
             clear_awaiting(context)
             await update.message.reply_text(
                 format_add_report(folder_title=None, added=added, skipped=skipped),
-                reply_markup=main_reply_keyboard(),
+                reply_markup=kb,
             )
-            if added or db.list_sources(user_id):
+            if added or db.list_sources(chat_id):
                 await update.message.reply_text(
                     "Отлично! Собираю пробную сводку…"
                 )
@@ -537,7 +661,7 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             from bot.sources_ops import add_telegram_from_text, format_add_report
 
             folder_title = str(awaiting.get("folder_title") or "")
-            added, skipped = add_telegram_from_text(db, user_id, text)
+            added, skipped = add_telegram_from_text(db, chat_id, text)
             clear_awaiting(context)
             await update.message.reply_text(
                 format_add_report(
@@ -545,7 +669,7 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     added=added,
                     skipped=skipped,
                 ),
-                reply_markup=sources_keyboard(db.list_sources(user_id)),
+                reply_markup=sources_keyboard(db.list_sources(chat_id)),
             )
             return
 
@@ -565,25 +689,25 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
             handles = parse_telegram_handles(text)
             if len(handles) > 1:
-                added, skipped = add_telegram_from_text(db, user_id, text)
+                added, skipped = add_telegram_from_text(db, chat_id, text)
                 clear_awaiting(context)
                 await update.message.reply_text(
                     format_add_report(
                         folder_title=None, added=added, skipped=skipped
                     ),
-                    reply_markup=sources_keyboard(db.list_sources(user_id)),
+                    reply_markup=sources_keyboard(db.list_sources(chat_id)),
                 )
                 return
 
             source_type, identifier, title = parse_add_args(
                 ["telegram", *text.split()]
             )
-            source = add_single_source(db, user_id, source_type, identifier, title)
+            source = add_single_source(db, chat_id, source_type, identifier, title)
             clear_awaiting(context)
             await update.message.reply_text(
                 f"Добавлен канал #{source.id}: {source.title}\n"
                 f"{source.identifier}",
-                reply_markup=sources_keyboard(db.list_sources(user_id)),
+                reply_markup=sources_keyboard(db.list_sources(chat_id)),
             )
             return
 
@@ -592,7 +716,7 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             added: list[str] = []
             for topic in topics:
                 try:
-                    db.add_topic(user_id, topic)
+                    db.add_topic(chat_id, topic)
                     added.append(topic)
                 except ValueError:
                     pass
@@ -600,15 +724,15 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if not added:
                 await update.message.reply_text(
                     "Все указанные темы уже были добавлены.",
-                    reply_markup=topics_keyboard(db.list_topic_rows(user_id)),
+                    reply_markup=topics_keyboard(db.list_topic_rows(chat_id)),
                 )
                 return
             await update.message.reply_text(
                 "Добавлены темы: "
                 + ", ".join(added)
                 + "\n\n"
-                + topics_text(db, user_id),
-                reply_markup=topics_keyboard(db.list_topic_rows(user_id)),
+                + topics_text(db, chat_id),
+                reply_markup=topics_keyboard(db.list_topic_rows(chat_id)),
             )
             return
     except ValueError as exc:
@@ -620,6 +744,6 @@ async def cancel_awaiting(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if update.message:
         await update.message.reply_text(
             "Отменено.",
-            reply_markup=main_reply_keyboard(),
+            reply_markup=_reply_kb(update),
         )
         await show_main_menu(update, context)
