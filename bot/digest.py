@@ -6,6 +6,11 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Any
 
+from bot.ai_summarize import (
+    ai_summary_active,
+    enrich_items,
+    merge_items_into_analysis,
+)
 from bot.analyzer import NewsAnalyzer, item_urls
 from bot.config import Settings
 from bot.db import Database
@@ -64,25 +69,21 @@ def _format_item_links(item: NewsItem) -> str:
     if not urls:
         return ""
     if len(urls) == 1:
-        return f' <a href="{escape(urls[0], quote=True)}">источник</a>'
+        return f'<a href="{escape(urls[0], quote=True)}">источник</a>'
     parts = [
         f'<a href="{escape(url, quote=True)}">канал{idx}</a>'
         for idx, url in enumerate(urls, start=1)
     ]
-    return " " + ", ".join(parts)
+    return ", ".join(parts)
 
 
-def _format_digest_item(idx: int, item: NewsItem) -> str:
+def _format_digest_item(item: NewsItem) -> str:
+    """SEO digest item: 2-sentence summary + source link (no numbering)."""
     essence = escape((item.summary or item.title or "").strip() or "Без заголовка")
-    line = f"{idx}. <b>{essence}</b>{_format_item_links(item)}"
-    bits: list[str] = []
-    if item.reactions:
-        bits.append(f"❤️ {item.reactions}")
-    if item.views:
-        bits.append(f"👁 {item.views}")
-    if bits:
-        line += f"\n<i>{' · '.join(bits)}</i>"
-    return line
+    link = _format_item_links(item).strip()
+    if link:
+        return f"{essence}\n{link}"
+    return essence
 
 
 class DigestService:
@@ -232,6 +233,12 @@ class DigestService:
                 },
                 "stats": {**analysis["stats"], "final_count": len(limited)},
             }
+
+        if ai_summary_active(self.settings) and limited:
+            enriched = await enrich_items(limited, self.settings)
+            analysis = merge_items_into_analysis(analysis, enriched)
+            limited = enriched
+
         return limited, errors, topics, days_used, analysis
 
     async def _safe_fetch(
@@ -332,21 +339,20 @@ def format_digest_result(
     only_unseen = bool(stats.get("only_unseen"))
     if only_unseen:
         header = (
-            f"🆕 Только новое за {days_used} {_days_word(days_used)} "
-            "(ещё не было в сводках)"
+            f"🆕 SEO-дайджест: только новое за {days_used} {_days_word(days_used)}"
         )
     else:
         header = (
-            f"🔥 Главные новости за {days_used} {_days_word(days_used)} (по реакциям)"
+            f"🔥 SEO-дайджест за {days_used} {_days_word(days_used)} (по реакциям)"
         )
     if topics:
         header += f"\nТемы: {', '.join(topics)}"
 
     stats_line = (
-        f"\n\n📊 Обработано постов: {stats.get('total_processed', len(flat))}, "
-        f"в дайджест вошло: {stats.get('final_count', len(flat))}, "
-        f"отсеяно как реклама/оффтоп: {stats.get('filtered_out', 0)}, "
-        f"объединено дублей: {stats.get('deduped_merged', 0)}."
+        f"\n\n📊 Обработано: {stats.get('total_processed', len(flat))}, "
+        f"в дайджест: {stats.get('final_count', len(flat))}, "
+        f"отсеяно (реклама/оффтоп): {stats.get('filtered_out', 0)}, "
+        f"дублей объединено: {stats.get('deduped_merged', 0)}."
     )
     err_block = ""
     if errors:
@@ -357,7 +363,6 @@ def format_digest_result(
     page_size = max(1, int(page_size))
     pages: list[str] = []
     total_items = len(flat)
-    global_idx = 1
 
     for start in range(0, total_items, page_size):
         chunk = flat[start : start + page_size]
@@ -370,10 +375,11 @@ def format_digest_result(
         last_cat: str | None = None
         for cat_name, item in chunk:
             if cat_name != last_cat:
-                parts.append(f"\n\n{cat_name}")
+                parts.append(f"\n\n<b>{escape(cat_name)}</b>\n")
                 last_cat = cat_name
-            parts.append("\n" + _format_digest_item(global_idx, item))
-            global_idx += 1
+            else:
+                parts.append("\n\n")
+            parts.append(_format_digest_item(item))
 
         is_last = start + page_size >= total_items
         if is_last:
@@ -395,7 +401,7 @@ def format_digest(
 ) -> list[str]:
     """Compatibility wrapper used by handlers/tests."""
     analysis = analysis or {
-        "categories": {"🔥 Главное": list(items)} if items else {},
+        "categories": {"🔍 Google и Поиск": list(items)} if items else {},
         "stats": {
             "total_processed": len(items),
             "final_count": len(items),
