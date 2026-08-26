@@ -29,8 +29,9 @@ async def deliver_digest_to_user(
     since=None,
     until=None,
 ) -> bool:
-    """Collect and send a digest to a private chat (chat_id == user_id).
+    """Collect and send a digest to a chat.
 
+    ``user_id`` is the workspace id (private chat.id == user.id, or group chat.id).
     Returns True if a message was sent.
     """
     digest: DigestService = context.application.bot_data["digest"]

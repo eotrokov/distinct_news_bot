@@ -30,6 +30,10 @@ async def send_plan_invoice(
         raise ValueError("Доступны планы: pro, plus")
     if not update.effective_user or not update.effective_message:
         return
+    from bot.chat_scope import group_buy_hint, is_private_chat
+
+    if not is_private_chat(update.effective_chat):
+        raise ValueError(group_buy_hint())
     settings: Settings = context.application.bot_data["settings"]
     user_id = update.effective_user.id
     price = stars_price_for(plan, settings)

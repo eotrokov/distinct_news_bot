@@ -14,6 +14,15 @@ from telegram.ext import (
 )
 
 from bot.addlist import extract_addlist_slug, fetch_addlist_title, parse_telegram_handles
+from bot.chat_scope import (
+    group_buy_hint,
+    group_manage_denied_text,
+    group_welcome_text,
+    is_group_chat,
+    is_private_chat,
+    user_can_manage,
+    workspace_id,
+)
 from bot.db import Database
 from bot.digest import parse_add_args, parse_days_arg
 from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
@@ -42,61 +51,77 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """\
-SEO-дайджест из ваших Telegram-каналов: без дублей, рекламы и оффтопа.
+SEO-дайджест из Telegram-каналов: без дублей, рекламы и оффтопа.
 
-Кнопки:
-• Сводка — SEO-новости за период (по реакциям, по блокам)
-• Только новое — посты, которых ещё не было в сводках
-• Расписание — ежедневная авто-сводка (Trial/Pro/Plus)
-• Подписка — план и оплата Stars
-• /menu — подробное inline-меню
+Работает в личке и в групповых чатах. В группе у чата свои каналы и расписание;
+настраивать могут администраторы. Оплата Stars — только в личке с ботом.
 
 Команды:
-/menu — открыть меню
-/add @channel [название] — добавить канал
-/add telegram @a @b — несколько каналов сразу
-/addlist <ссылка> — папка t.me/addlist/… (затем вручную список @каналов)
+/menu — меню
+/add @channel — добавить канал
+/add @a @b — несколько каналов
+/addlist <ссылка> — папка t.me/addlist/…
 /remove <id> — удалить канал
 /sources — список каналов
-/topic add <тема> — добавить тему-фильтр
-/topic del <тема> — удалить тему
+/topic add <тема> — тема-фильтр
 /topics — список тем
-/topic clear — сбросить все темы
-/news — дайджест за период
-/news 7 — то же за 7 дней
+/news — дайджест
+/news 7 — за 7 дней
 /news new — только новое
-/schedule — авто-сводка по расписанию
+/schedule on 9 — авто-сводка в этот чат
 /plan — статус подписки
-/buy pro | /buy plus — оплата Telegram Stars
+/buy pro — оплата Stars (личка)
 /reset — сбросить просмотренное
-/delete_me — удалить все ваши данные
-/cancel — отменить ввод
-/help — эта справка
+/delete_me — удалить данные этого чата
+/help — справка
 
-Блоки: Google и Поиск · Линкбилдинг и E-E-A-T · Инструменты · Аналитика · ИИ в SEO · Контент.
+Блоки: Google · Линкбилдинг · Инструменты · Аналитика · ИИ · Контент.
 
-Утро: /schedule on 9:55 — дайджест за вчерашний день (Trial/Pro/Plus).
-
-Trial 7 дней с полным доступом. Дальше Free или Pro/Plus за Stars.
-
-Источники — только публичные Telegram-каналы. Папка addlist: бот берёт название, каналы нужно прислать списком (@name).
-
-Примеры:
-/add seonews
-/add @ch1 @ch2 https://t.me/ch3
-/schedule on 9:55
-/buy pro
-/news
+Утро: /schedule on 9:55 — дайджест за вчера (в личке или группе).
+Добавьте бота в группу → /start → /add @channel → /news.
 """
+
+
+def _reply_kb(update: Update):
+    if is_private_chat(update.effective_chat):
+        return main_reply_keyboard()
+    return None
+
+
+async def _deny_if_cannot_manage(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    """Return True if the user may NOT manage (and a reply was sent)."""
+    if await user_can_manage(update, context):
+        return False
+    if update.effective_message:
+        await update.effective_message.reply_text(group_manage_denied_text())
+    return True
+
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = context.application.bot_data["db"]
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
         return
-    user_id = update.effective_user.id
-    db.ensure_user(user_id)
-    sources = db.list_sources(user_id)
+    chat_id = workspace_id(update)
+    if chat_id is None:
+        return
+    db.ensure_user(chat_id)
+
+    if is_group_chat(update.effective_chat):
+        if await _deny_if_cannot_manage(update, context):
+            return
+        title = update.effective_chat.title
+        sources = db.list_sources(chat_id)
+        await update.message.reply_text(group_welcome_text(title))
+        await update.message.reply_text(
+            "Меню:" if sources else "Добавьте каналы: /add @channel",
+            reply_markup=main_inline_keyboard(),
+        )
+        return
+
+    sources = db.list_sources(chat_id)
     if not sources:
         from bot.keyboards import ONBOARD_PROMPT
         from bot.menu import set_awaiting
@@ -120,23 +145,30 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text(HELP_TEXT, reply_markup=main_reply_keyboard())
+        await update.message.reply_text(HELP_TEXT, reply_markup=_reply_kb(update))
 
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = context.application.bot_data["db"]
-    if update.effective_user:
-        db.ensure_user(update.effective_user.id)
+    chat_id = workspace_id(update)
+    if chat_id is not None:
+        db.ensure_user(chat_id)
     await show_main_menu(update, context)
 
 
 async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
+        return
+    if await _deny_if_cannot_manage(update, context):
         return
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
+    chat_id = workspace_id(update)
+    if chat_id is None:
+        return
+    db.ensure_user(chat_id)
     args = list(context.args or [])
     joined = " ".join(args)
+    kb = _reply_kb(update)
 
     if args and extract_addlist_slug(joined) and "addlist" in joined.lower():
         await begin_addlist_import(update, context, joined)
@@ -158,19 +190,19 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 return
             handles = parse_telegram_handles(rest)
             if len(handles) > 1:
-                added, skipped = add_telegram_from_text(db, user_id, rest)
+                added, skipped = add_telegram_from_text(db, chat_id, rest)
                 await update.message.reply_text(
                     format_add_report(folder_title=None, added=added, skipped=skipped),
-                    reply_markup=main_reply_keyboard(),
+                    reply_markup=kb,
                 )
                 return
         else:
             handles = parse_telegram_handles(joined)
             if len(handles) > 1:
-                added, skipped = add_telegram_from_text(db, user_id, joined)
+                added, skipped = add_telegram_from_text(db, chat_id, joined)
                 await update.message.reply_text(
                     format_add_report(folder_title=None, added=added, skipped=skipped),
-                    reply_markup=main_reply_keyboard(),
+                    reply_markup=kb,
                 )
                 return
 
@@ -182,7 +214,7 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         ):
             await begin_addlist_import(update, context, identifier)
             return
-        source = add_single_source(db, user_id, source_type, identifier, title)
+        source = add_single_source(db, chat_id, source_type, identifier, title)
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
@@ -191,12 +223,14 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Добавлен канал #{source.id}: {source.title}\n"
         f"`{source.identifier}`",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=main_reply_keyboard(),
+        reply_markup=kb,
     )
 
 
 async def addlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
+        return
+    if await _deny_if_cannot_manage(update, context):
         return
     args = context.args or []
     if not args:
@@ -214,15 +248,19 @@ async def begin_addlist_import(
     context: ContextTypes.DEFAULT_TYPE,
     raw: str,
 ) -> None:
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
         return
-    # If the same message already contains channel handles — add immediately.
+    if await _deny_if_cannot_manage(update, context):
+        return
+    chat_id = workspace_id(update)
+    if chat_id is None:
+        return
+    kb = _reply_kb(update)
     handles = parse_telegram_handles(raw)
     if handles:
         db: Database = context.application.bot_data["db"]
-        added, skipped = add_telegram_from_text(
-            db, update.effective_user.id, raw
-        )
+        db.ensure_user(chat_id)
+        added, skipped = add_telegram_from_text(db, chat_id, raw)
         title = None
         try:
             title = await fetch_addlist_title(raw)
@@ -230,7 +268,7 @@ async def begin_addlist_import(
             title = None
         await update.message.reply_text(
             format_add_report(folder_title=title, added=added, skipped=skipped),
-            reply_markup=main_reply_keyboard(),
+            reply_markup=kb,
         )
         return
 
@@ -245,26 +283,36 @@ async def begin_addlist_import(
         context,
         {"kind": "addlist_channels", "folder_title": title, "raw": raw},
     )
+    hint = (
+        "Пришлите публичные @username из папки вручную "
+        "(через пробел или с новой строки)."
+        if is_private_chat(update.effective_chat)
+        else "В группе пришлите: /add @ch1 @ch2 …"
+    )
     await status.edit_text(
         f"Папка: «{title}»\n\n"
         "Telegram не отдаёт список каналов из папки автоматически.\n"
-        "Пришлите публичные @username из папки вручную "
-        "(через пробел или с новой строки).\n\n"
+        f"{hint}\n\n"
         "Пример: @channel1 @channel2\n"
         "/cancel — отмена"
     )
 
 
 async def remove_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
+        return
+    if await _deny_if_cannot_manage(update, context):
         return
     db: Database = context.application.bot_data["db"]
+    chat_id = workspace_id(update)
+    if chat_id is None:
+        return
     args = context.args or []
     if len(args) != 1 or not args[0].isdigit():
         await update.message.reply_text("Формат: /remove <id>")
         return
     source_id = int(args[0])
-    ok = db.remove_source(update.effective_user.id, source_id)
+    ok = db.remove_source(chat_id, source_id)
     if ok:
         await update.message.reply_text(f"Источник #{source_id} удалён.")
     else:
@@ -272,16 +320,19 @@ async def remove_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
         return
     await show_sources_panel(update, context)
 
 
 async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
         return
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
+    chat_id = workspace_id(update)
+    if chat_id is None:
+        return
+    db.ensure_user(chat_id)
     args = list(context.args or [])
     if not args:
         await show_topics_panel(update, context)
@@ -290,13 +341,17 @@ async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     action = args[0].lower()
     rest = args[1:]
 
+    if action not in {"list", "ls", "show"}:
+        if await _deny_if_cannot_manage(update, context):
+            return
+
     try:
         if action in {"add", "a", "+"}:
             topics = parse_topic_args(rest)
             added: list[str] = []
             for topic in topics:
                 try:
-                    db.add_topic(user_id, topic)
+                    db.add_topic(chat_id, topic)
                     added.append(topic)
                 except ValueError:
                     pass
@@ -305,17 +360,17 @@ async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 return
             await update.message.reply_text(
                 "Добавлены темы: " + ", ".join(added) + "\n"
-                "Сейчас активны: " + ", ".join(db.list_topics(user_id))
+                "Сейчас активны: " + ", ".join(db.list_topics(chat_id))
             )
             return
 
         if action in {"del", "delete", "remove", "rm", "-"}:
             topics = parse_topic_args(rest)
-            removed = [t for t in topics if db.remove_topic(user_id, t)]
+            removed = [t for t in topics if db.remove_topic(chat_id, t)]
             if not removed:
                 await update.message.reply_text("Таких тем нет.")
                 return
-            remaining = db.list_topics(user_id)
+            remaining = db.list_topics(chat_id)
             tail = (
                 "Остались: " + ", ".join(remaining)
                 if remaining
@@ -331,48 +386,55 @@ async def topic_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
         if action in {"clear", "reset", "all"}:
-            count = db.clear_topics(user_id)
+            count = db.clear_topics(chat_id)
             await update.message.reply_text(
                 f"Сброшено тем: {count}. Теперь /news без фильтра по темам."
             )
             return
 
+        # Shorthand: /topic ai
         topics = parse_topic_args(args)
         added = []
         for topic in topics:
             try:
-                db.add_topic(user_id, topic)
+                db.add_topic(chat_id, topic)
                 added.append(topic)
             except ValueError:
                 pass
         if not added:
-            await update.message.reply_text("Все указанные темы уже были добавлены.")
+            await update.message.reply_text(
+                "Все указанные темы уже были добавлены.\n"
+                "Сейчас активны: " + ", ".join(db.list_topics(chat_id))
+            )
             return
         await update.message.reply_text(
             "Добавлены темы: " + ", ".join(added) + "\n"
-            "Сейчас активны: " + ", ".join(db.list_topics(user_id))
+            "Сейчас активны: " + ", ".join(db.list_topics(chat_id))
         )
     except ValueError as exc:
         await update.message.reply_text(str(exc))
 
 
 async def topics_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
-        return
     await show_topics_panel(update, context)
 
 
 async def schedule_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
         return
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
-    if not db.get_entitlement(user_id).limits().allow_schedule:
+    chat_id = workspace_id(update)
+    if chat_id is None:
+        return
+    db.ensure_user(chat_id)
+    if not db.get_entitlement(chat_id).limits().allow_schedule:
         await show_plan_panel(update, context)
         return
     args = list(context.args or [])
     if not args:
         await show_schedule_panel(update, context)
+        return
+    if await _deny_if_cannot_manage(update, context):
         return
 
     from bot.schedule import format_schedule_status, parse_schedule_time, parse_tz_offset
@@ -383,27 +445,26 @@ async def schedule_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             if len(args) > 1:
                 hour, minute = parse_schedule_time(args[1])
                 schedule = db.set_schedule(
-                    user_id, enabled=True, hour=hour, minute=minute
+                    chat_id, enabled=True, hour=hour, minute=minute
                 )
             else:
-                # Default morning SEO digest: 09:55
                 schedule = db.set_schedule(
-                    user_id, enabled=True, hour=9, minute=55
+                    chat_id, enabled=True, hour=9, minute=55
                 )
         elif action in {"off", "disable", "выкл"}:
-            schedule = db.set_schedule(user_id, enabled=False)
+            schedule = db.set_schedule(chat_id, enabled=False)
         elif action in {"hour", "час", "time", "время"}:
             if len(args) < 2:
                 raise ValueError("Формат: /schedule time 9:55")
             hour, minute = parse_schedule_time(args[1])
             schedule = db.set_schedule(
-                user_id, hour=hour, minute=minute, enabled=True
+                chat_id, hour=hour, minute=minute, enabled=True
             )
         elif action in {"tz", "timezone", "пояс"}:
             if len(args) < 2:
                 raise ValueError("Формат: /schedule tz +3")
             offset = parse_tz_offset(args[1])
-            schedule = db.set_schedule(user_id, tz_offset_minutes=offset)
+            schedule = db.set_schedule(chat_id, tz_offset_minutes=offset)
         else:
             raise ValueError(
                 "Команды: /schedule on [время], /schedule off, "
@@ -428,6 +489,9 @@ async def plan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
+    if not is_private_chat(update.effective_chat):
+        await update.message.reply_text(group_buy_hint())
+        return
     args = list(context.args or [])
     if not args or args[0].lower() not in {"pro", "plus"}:
         await update.message.reply_text("Формат: /buy pro или /buy plus")
@@ -441,16 +505,21 @@ async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def delete_me_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
+        return
+    if await _deny_if_cannot_manage(update, context):
         return
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
-    db.delete_user_data(user_id)
+    chat_id = workspace_id(update)
+    if chat_id is None:
+        return
+    db.delete_user_data(chat_id)
     clear_awaiting(context)
+    where = "этого чата" if is_group_chat(update.effective_chat) else "ваши"
     await update.message.reply_text(
-        "Все ваши данные удалены (каналы, темы, просмотренное, подписка).\n"
+        f"Все данные {where} удалены (каналы, темы, просмотренное, подписка).\n"
         "Нажмите /start, чтобы начать заново.",
-        reply_markup=main_reply_keyboard(),
+        reply_markup=_reply_kb(update),
     )
 
 
@@ -471,13 +540,14 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = list(context.args or [])
     if len(args) < 2:
         await update.message.reply_text(
-            "Формат: /grant <user_id> <trial|free|pro|plus> [дней]"
+            "Формат: /grant <user_or_chat_id> <trial|free|pro|plus> [дней]\n"
+            "Для группы укажите chat_id (отрицательный)."
         )
         return
     try:
         target = int(args[0])
     except ValueError:
-        await update.message.reply_text("user_id должен быть числом")
+        await update.message.reply_text("id должен быть числом")
         return
     plan = args[1].lower()
     if plan not in {"trial", "free", "pro", "plus"}:
@@ -494,7 +564,7 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         expires = datetime.now(timezone.utc) + timedelta(days=days)
     ent = db.set_plan(target, plan, expires_at=expires)
     await update.message.reply_text(
-        f"Выдано user={target}\n" + format_plan_status(ent)
+        f"Выдано id={target}\n" + format_plan_status(ent)
     )
 
 
@@ -507,7 +577,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = context.application.bot_data["db"]
     await update.message.reply_text(
         "📊 Статистика\n"
-        f"Пользователи: {db.count_users()}\n"
+        f"Пользователи/чаты: {db.count_users()}\n"
         f"Каналы: {db.count_sources()}\n"
         f"Платящие (pro/plus): {db.count_paid_users()}"
     )
@@ -533,16 +603,20 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message or not update.effective_user:
+    if not update.message or not update.effective_chat:
+        return
+    if await _deny_if_cannot_manage(update, context):
         return
     db: Database = context.application.bot_data["db"]
-    user_id = update.effective_user.id
-    cleared = db.clear_seen(user_id)
-    db.reset_last_digest_at(user_id)
+    chat_id = workspace_id(update)
+    if chat_id is None:
+        return
+    cleared = db.clear_seen(chat_id)
+    db.reset_last_digest_at(chat_id)
     await update.message.reply_text(
         f"Просмотренное сброшено ({cleared}). "
-        "Кнопка «Только новое» снова покажет эти посты.",
-        reply_markup=main_reply_keyboard(),
+        "«Только новое» снова покажет эти посты.",
+        reply_markup=_reply_kb(update),
     )
 
 
@@ -556,6 +630,9 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if get_awaiting(context):
         await on_awaiting_text(update, context)
+        return
+    # In groups with privacy mode the bot rarely sees plain text; ignore noise.
+    if is_group_chat(update.effective_chat):
         return
     if extract_addlist_slug(text) and "addlist" in text.lower():
         await begin_addlist_import(update, context, text)
