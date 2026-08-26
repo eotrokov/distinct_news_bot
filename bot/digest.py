@@ -112,14 +112,26 @@ class DigestService:
         days: int | None = None,
         *,
         only_unseen: bool = False,
+        since: datetime | None = None,
+        until: datetime | None = None,
     ) -> tuple[list[NewsItem], list[str], list[str], int, dict[str, Any]]:
         """Return (items, errors, topics, days_used, analysis).
 
         Same ranking pipeline as weekly digests: time window, noise filter,
         merge duplicates, sort by reactions/views. When ``only_unseen`` is
         True, drop items already marked seen from prior digests.
+
+        Optional ``since`` / ``until`` (UTC-aware) override the rolling
+        ``days`` window — used for scheduled digests of the previous
+        calendar day.
         """
         days_used = clamp_digest_days(days, self.settings.default_digest_days)
+        if since is not None and until is not None and until > since:
+            span = until - since
+            days_used = clamp_digest_days(
+                max(1, int(round(span.total_seconds() / 86400))),
+                self.settings.default_digest_days,
+            )
         ent = self.db.get_entitlement(user_id)
         max_days = ent.limits().max_digest_days
         if days_used > max_days:
@@ -147,12 +159,18 @@ class DigestService:
                 empty_analysis,
             )
 
-        since = datetime.now(timezone.utc) - timedelta(days=days_used)
+        window_since = since or (
+            datetime.now(timezone.utc) - timedelta(days=days_used)
+        )
+        window_until = until
         # Public preview ~20 posts/page; longer windows paginate deeper, like weekly.
         max_pages = 5 if days_used >= 5 else 2
 
         results = await asyncio.gather(
-            *[self._safe_fetch(source, since=since, max_pages=max_pages) for source in sources],
+            *[
+                self._safe_fetch(source, since=window_since, max_pages=max_pages)
+                for source in sources
+            ],
             return_exceptions=False,
         )
 
@@ -167,8 +185,14 @@ class DigestService:
         filtered = [
             item
             for item in items
-            if item.published_at is None or item.published_at >= since
+            if item.published_at is None or item.published_at >= window_since
         ]
+        if window_until is not None:
+            filtered = [
+                item
+                for item in filtered
+                if item.published_at is None or item.published_at < window_until
+            ]
         if topics:
             filtered = [
                 item
