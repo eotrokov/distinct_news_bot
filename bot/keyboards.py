@@ -91,20 +91,20 @@ def schedule_keyboard(*, enabled: bool) -> InlineKeyboardMarkup:
     toggle = (
         InlineKeyboardButton("Выключить", callback_data="m:sched:off")
         if enabled
-        else InlineKeyboardButton("Включить (09:00)", callback_data="m:sched:on")
+        else InlineKeyboardButton("Включить (09:55)", callback_data="m:sched:on")
     )
     return InlineKeyboardMarkup(
         [
             [toggle],
             [
-                InlineKeyboardButton("08:00", callback_data="m:sched:h:8"),
-                InlineKeyboardButton("09:00", callback_data="m:sched:h:9"),
-                InlineKeyboardButton("10:00", callback_data="m:sched:h:10"),
+                InlineKeyboardButton("08:00", callback_data="m:sched:t:8:0"),
+                InlineKeyboardButton("09:00", callback_data="m:sched:t:9:0"),
+                InlineKeyboardButton("09:55", callback_data="m:sched:t:9:55"),
             ],
             [
-                InlineKeyboardButton("12:00", callback_data="m:sched:h:12"),
-                InlineKeyboardButton("18:00", callback_data="m:sched:h:18"),
-                InlineKeyboardButton("21:00", callback_data="m:sched:h:21"),
+                InlineKeyboardButton("10:00", callback_data="m:sched:t:10:0"),
+                InlineKeyboardButton("12:00", callback_data="m:sched:t:12:0"),
+                InlineKeyboardButton("18:00", callback_data="m:sched:t:18:0"),
             ],
             [
                 InlineKeyboardButton("UTC+3", callback_data="m:sched:tz:180"),

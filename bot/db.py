@@ -101,6 +101,7 @@ class Database:
         alterations = [
             ("schedule_enabled", "INTEGER NOT NULL DEFAULT 0"),
             ("schedule_hour", "INTEGER NOT NULL DEFAULT 9"),
+            ("schedule_minute", "INTEGER NOT NULL DEFAULT 55"),
             ("tz_offset_minutes", "INTEGER NOT NULL DEFAULT 180"),
             ("last_schedule_date", "TEXT"),
         ]
@@ -347,7 +348,7 @@ class Database:
         with self.connect() as conn:
             row = conn.execute(
                 """
-                SELECT user_id, schedule_enabled, schedule_hour,
+                SELECT user_id, schedule_enabled, schedule_hour, schedule_minute,
                        tz_offset_minutes, last_schedule_date
                 FROM users WHERE user_id = ?
                 """,
@@ -361,12 +362,14 @@ class Database:
         *,
         enabled: bool | None = None,
         hour: int | None = None,
+        minute: int | None = None,
         tz_offset_minutes: int | None = None,
     ) -> UserSchedule:
         self.ensure_user(user_id)
         current = self.get_schedule(user_id)
         new_enabled = current.enabled if enabled is None else bool(enabled)
         new_hour = current.hour if hour is None else int(hour)
+        new_minute = current.minute if minute is None else int(minute)
         new_tz = (
             current.tz_offset_minutes
             if tz_offset_minutes is None
@@ -374,16 +377,19 @@ class Database:
         )
         if not 0 <= new_hour <= 23:
             raise ValueError("Час должен быть от 0 до 23")
+        if not 0 <= new_minute <= 59:
+            raise ValueError("Минуты должны быть от 0 до 59")
         if not -12 * 60 <= new_tz <= 14 * 60:
             raise ValueError("Смещение вне диапазона UTC−12…UTC+14")
         with self.connect() as conn:
             conn.execute(
                 """
                 UPDATE users
-                SET schedule_enabled = ?, schedule_hour = ?, tz_offset_minutes = ?
+                SET schedule_enabled = ?, schedule_hour = ?, schedule_minute = ?,
+                    tz_offset_minutes = ?
                 WHERE user_id = ?
                 """,
-                (1 if new_enabled else 0, new_hour, new_tz, user_id),
+                (1 if new_enabled else 0, new_hour, new_minute, new_tz, user_id),
             )
         return self.get_schedule(user_id)
 
@@ -400,7 +406,7 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT user_id, schedule_enabled, schedule_hour,
+                SELECT user_id, schedule_enabled, schedule_hour, schedule_minute,
                        tz_offset_minutes, last_schedule_date
                 FROM users
                 WHERE schedule_enabled = 1
@@ -504,10 +510,15 @@ class Database:
 
     @staticmethod
     def _row_to_schedule(row: sqlite3.Row) -> UserSchedule:
+        keys = set(row.keys())
+        minute = 55
+        if "schedule_minute" in keys and row["schedule_minute"] is not None:
+            minute = int(row["schedule_minute"])
         return UserSchedule(
             user_id=int(row["user_id"]),
             enabled=bool(row["schedule_enabled"]),
             hour=int(row["schedule_hour"] if row["schedule_hour"] is not None else 9),
+            minute=minute,
             tz_offset_minutes=int(
                 row["tz_offset_minutes"]
                 if row["tz_offset_minutes"] is not None

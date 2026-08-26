@@ -77,6 +77,7 @@ SEO-дайджест из Telegram-каналов: без дублей, рекл
 
 Блоки: Google · Линкбилдинг · Инструменты · Аналитика · ИИ · Контент.
 
+Утро: /schedule on 9:55 — дайджест за вчера (в личке или группе).
 Добавьте бота в группу → /start → /add @channel → /news.
 """
 
@@ -436,35 +437,29 @@ async def schedule_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if await _deny_if_cannot_manage(update, context):
         return
 
-    from bot.schedule import format_schedule_status, parse_tz_offset
+    from bot.schedule import format_schedule_status, parse_schedule_time, parse_tz_offset
 
     action = args[0].lower()
     try:
         if action in {"on", "enable", "вкл"}:
-            hour = int(args[1]) if len(args) > 1 else 9
-            schedule = db.set_schedule(chat_id, enabled=True, hour=hour)
+            if len(args) > 1:
+                hour, minute = parse_schedule_time(args[1])
+                schedule = db.set_schedule(
+                    chat_id, enabled=True, hour=hour, minute=minute
+                )
+            else:
+                schedule = db.set_schedule(
+                    chat_id, enabled=True, hour=9, minute=55
+                )
         elif action in {"off", "disable", "выкл"}:
             schedule = db.set_schedule(chat_id, enabled=False)
         elif action in {"hour", "час", "time", "время"}:
             if len(args) < 2:
-                raise ValueError("Формат: /schedule hour 9")
-            # Accept 9 or 9:55 if parse_schedule_time exists
-            raw = args[1]
-            if ":" in raw:
-                try:
-                    from bot.schedule import parse_schedule_time
-
-                    hour, minute = parse_schedule_time(raw)
-                    schedule = db.set_schedule(
-                        chat_id, hour=hour, minute=minute, enabled=True
-                    )
-                except TypeError:
-                    hour = int(raw.split(":")[0])
-                    schedule = db.set_schedule(chat_id, hour=hour, enabled=True)
-            else:
-                schedule = db.set_schedule(
-                    chat_id, hour=int(raw), enabled=True
-                )
+                raise ValueError("Формат: /schedule time 9:55")
+            hour, minute = parse_schedule_time(args[1])
+            schedule = db.set_schedule(
+                chat_id, hour=hour, minute=minute, enabled=True
+            )
         elif action in {"tz", "timezone", "пояс"}:
             if len(args) < 2:
                 raise ValueError("Формат: /schedule tz +3")
@@ -472,8 +467,8 @@ async def schedule_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             schedule = db.set_schedule(chat_id, tz_offset_minutes=offset)
         else:
             raise ValueError(
-                "Команды: /schedule on [час], /schedule off, "
-                "/schedule hour 9, /schedule tz +3"
+                "Команды: /schedule on [время], /schedule off, "
+                "/schedule time 9:55, /schedule tz +3"
             )
     except ValueError as exc:
         await update.message.reply_text(str(exc))

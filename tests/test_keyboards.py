@@ -48,7 +48,7 @@ def test_schedule_keyboard():
     kb = schedule_keyboard(enabled=False)
     data = {b.callback_data for r in kb.inline_keyboard for b in r}
     assert "m:sched:on" in data
-    assert "m:sched:h:9" in data
+    assert "m:sched:t:9:55" in data
     assert "m:sched:tz:180" in data
     kb_on = schedule_keyboard(enabled=True)
     data_on = {b.callback_data for r in kb_on.inline_keyboard for b in r}

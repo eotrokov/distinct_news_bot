@@ -423,7 +423,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not db.get_entitlement(chat_id).limits().allow_schedule:
             await query.answer("Расписание доступно на Pro", show_alert=True)
             return
-        schedule = db.set_schedule(chat_id, enabled=True)
+        schedule = db.set_schedule(
+            chat_id, enabled=True, hour=9, minute=55
+        )
         await query.edit_message_text(
             format_schedule_status(schedule),
             reply_markup=schedule_keyboard(enabled=schedule.enabled),
@@ -438,19 +440,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             reply_markup=schedule_keyboard(enabled=schedule.enabled),
         )
         return
-    if data.startswith("m:sched:h:"):
-        if not await _require_manage(update, context, alert=True):
-            return
-        if not db.get_entitlement(chat_id).limits().allow_schedule:
-            await query.answer("Расписание доступно на Pro", show_alert=True)
-            return
-        hour = int(data.split(":")[3])
-        schedule = db.set_schedule(chat_id, enabled=True, hour=hour)
-        await query.edit_message_text(
-            format_schedule_status(schedule),
-            reply_markup=schedule_keyboard(enabled=schedule.enabled),
-        )
-        return
     if data.startswith("m:sched:t:"):
         if not await _require_manage(update, context, alert=True):
             return
@@ -460,12 +449,24 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         parts = data.split(":")
         hour = int(parts[3])
         minute = int(parts[4]) if len(parts) > 4 else 0
-        kwargs = {"enabled": True, "hour": hour}
-        # minute support may land from morning-digest PR; ignore if unavailable
-        try:
-            schedule = db.set_schedule(chat_id, minute=minute, **kwargs)
-        except TypeError:
-            schedule = db.set_schedule(chat_id, **kwargs)
+        schedule = db.set_schedule(
+            chat_id, enabled=True, hour=hour, minute=minute
+        )
+        await query.edit_message_text(
+            format_schedule_status(schedule),
+            reply_markup=schedule_keyboard(enabled=schedule.enabled),
+        )
+        return
+    if data.startswith("m:sched:h:"):
+        if not await _require_manage(update, context, alert=True):
+            return
+        if not db.get_entitlement(chat_id).limits().allow_schedule:
+            await query.answer("Расписание доступно на Pro", show_alert=True)
+            return
+        hour = int(data.split(":")[3])
+        schedule = db.set_schedule(
+            chat_id, enabled=True, hour=hour, minute=0
+        )
         await query.edit_message_text(
             format_schedule_status(schedule),
             reply_markup=schedule_keyboard(enabled=schedule.enabled),
