@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from telegram.constants import ParseMode
@@ -13,7 +14,8 @@ from bot.schedule import UserSchedule
 
 logger = logging.getLogger(__name__)
 
-SCHEDULE_JOB_INTERVAL_SECONDS = 300  # 5 minutes
+# Check every minute so :55 schedules fire close to the requested time.
+SCHEDULE_JOB_INTERVAL_SECONDS = 60
 
 
 async def deliver_digest_to_user(
@@ -24,6 +26,8 @@ async def deliver_digest_to_user(
     only_unseen: bool = False,
     preface: str | None = None,
     consume_quota: bool = True,
+    since=None,
+    until=None,
 ) -> bool:
     """Collect and send a digest to a private chat (chat_id == user_id).
 
@@ -32,7 +36,7 @@ async def deliver_digest_to_user(
     digest: DigestService = context.application.bot_data["digest"]
     db: Database = context.application.bot_data["db"]
     if consume_quota:
-        allowed, ent = db.consume_digest_quota(user_id)
+        allowed, _ent = db.consume_digest_quota(user_id)
         if not allowed:
             logger.info(
                 "Skip scheduled digest for user %s — daily quota exhausted",
@@ -41,7 +45,11 @@ async def deliver_digest_to_user(
             return False
     try:
         items, errors, topics, days_used, analysis = await digest.collect_for_user(
-            user_id, days=days, only_unseen=only_unseen
+            user_id,
+            days=days,
+            only_unseen=only_unseen,
+            since=since,
+            until=until,
         )
     except Exception:  # noqa: BLE001
         logger.exception("Scheduled digest failed for user %s", user_id)
@@ -99,15 +107,21 @@ async def _send_scheduled_digest(
     local_date = schedule.local_date_str()
     # Mark first to avoid double-send on overlapping ticks if send is slow.
     db.mark_schedule_sent(user_id, local_date)
+    since, until = schedule.previous_local_day_bounds()
+    yday = schedule.local_now().date() - timedelta(days=1)
     preface = (
-        f"📅 Авто-сводка · {schedule.hour:02d}:00 ({schedule.format_offset()})"
+        f"📅 Авто-сводка за {yday.isoformat()} · "
+        f"{schedule.format_time()} ({schedule.format_offset()})"
     )
     try:
         await deliver_digest_to_user(
             context,
             user_id,
+            days=1,
             only_unseen=False,
             preface=preface,
+            since=since,
+            until=until,
         )
     except Exception:  # noqa: BLE001
         logger.exception("Failed scheduled digest delivery for user %s", user_id)
