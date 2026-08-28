@@ -19,7 +19,7 @@ PLAN_CATALOG: dict[str, PlanLimits] = {
     "trial": PlanLimits(
         key="trial",
         title="Trial",
-        max_sources=5,
+        max_sources=30,
         max_digests_per_day=10,
         allow_schedule=True,
         max_digest_days=7,

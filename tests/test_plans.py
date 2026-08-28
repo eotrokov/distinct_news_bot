@@ -20,7 +20,7 @@ def test_trial_plan_status_shows_channel_limit(tmp_path):
 
     lines = format_plan_status(ent).splitlines()
 
-    assert lines[:2] == ["⭐️ Подписка: Trial", "Каналы: до 5"]
+    assert lines[:2] == ["⭐️ Подписка: Trial", "Каналы: до 30"]
 
 
 def test_trial_expires_to_free():
