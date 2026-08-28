@@ -6,6 +6,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
+from bot.channel_presets import CHANNEL_PRESETS, get_channel_preset
 from bot.db import Database
 from bot.digest import DigestService, parse_add_args
 from bot.keyboards import (
@@ -20,6 +21,7 @@ from bot.keyboards import (
     REPLY_BUTTONS,
     TELEGRAM_SOURCE_PROMPT,
     back_home_keyboard,
+    channel_presets_keyboard,
     digest_mode_keyboard,
     digest_page_keyboard,
     main_inline_keyboard,
@@ -198,7 +200,8 @@ def sources_text(db: Database, user_id: int) -> str:
     if not sources:
         return (
             "Каналов пока нет.\n"
-            "Добавьте: /add @channel или кнопка «Добавить канал»"
+            "Добавьте: /add @channel, кнопка «Добавить канал» "
+            "или «Готовые наборы»"
         )
     lines = ["Каналы этого чата (нажмите, чтобы удалить):"]
     for s in sources:
@@ -235,6 +238,29 @@ async def show_sources_panel(
     db.ensure_user(chat_id)
     text = sources_text(db, chat_id)
     markup = sources_keyboard(db.list_sources(chat_id))
+    if edit and update.callback_query and update.callback_query.message:
+        await update.callback_query.edit_message_text(text, reply_markup=markup)
+    elif update.effective_message:
+        await update.effective_message.reply_text(text, reply_markup=markup)
+
+
+async def show_channel_presets_panel(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    edit: bool = False,
+) -> None:
+    clear_awaiting(context)
+    lines = ["Готовые наборы каналов:"]
+    for preset in CHANNEL_PRESETS:
+        lines.append(
+            f"• {preset.title} — {preset.description} "
+            f"({preset.count} каналов)"
+        )
+        if preset.addlist_url:
+            lines.append(f"  Папка: {preset.addlist_url}")
+    text = "\n".join(lines)
+    markup = channel_presets_keyboard()
     if edit and update.callback_query and update.callback_query.message:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
     elif update.effective_message:
@@ -395,6 +421,32 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if data == "m:sources":
         await show_sources_panel(update, context, edit=True)
+        return
+    if data == "m:src_presets":
+        await show_channel_presets_panel(update, context, edit=True)
+        return
+    if data.startswith("m:src_preset:"):
+        if not await _require_manage(update, context, alert=True):
+            return
+        slug = data.removeprefix("m:src_preset:")
+        preset = get_channel_preset(slug)
+        if not preset:
+            await query.answer("Набор не найден.", show_alert=True)
+            return
+        from bot.sources_ops import add_telegram_channels, format_add_report
+
+        added, skipped = add_telegram_channels(db, chat_id, list(preset.channels))
+        report = format_add_report(
+            folder_title=preset.title,
+            added=added,
+            skipped=skipped,
+        )
+        if preset.addlist_url:
+            report += f"\nПапка Telegram: {preset.addlist_url}"
+        await query.edit_message_text(
+            f"{report}\n\n{sources_text(db, chat_id)}",
+            reply_markup=sources_keyboard(db.list_sources(chat_id)),
+        )
         return
     if data == "m:topics":
         await show_topics_panel(update, context, edit=True)
