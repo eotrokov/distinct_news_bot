@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from bot.db import Database
-from bot.plans import PLAN_CATALOG, TRIAL_DAYS, UserEntitlement
+from bot.plans import PLAN_CATALOG, TRIAL_DAYS, UserEntitlement, format_plan_status
 
 
 def test_trial_entitlement_defaults(tmp_path):
@@ -12,6 +12,15 @@ def test_trial_entitlement_defaults(tmp_path):
     assert ent.effective_plan() == "trial"
     assert ent.limits().max_sources == PLAN_CATALOG["trial"].max_sources
     assert ent.limits().allow_schedule is True
+
+
+def test_trial_plan_status_shows_channel_limit(tmp_path):
+    db = Database(str(tmp_path / "plan-status.sqlite3"))
+    ent = db.get_entitlement(1)
+
+    lines = format_plan_status(ent).splitlines()
+
+    assert lines[:2] == ["⭐️ Подписка: Trial", "Каналы: до 5"]
 
 
 def test_trial_expires_to_free():

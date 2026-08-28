@@ -88,7 +88,7 @@ def format_plan_status(ent: UserEntitlement) -> str:
     key = ent.effective_plan(now)
     limits = PLAN_CATALOG[key]
     lines = [
-        f"⭐ Подписка: {limits.title}",
+        f"⭐️ Подписка: {limits.title}",
         f"Каналы: до {limits.max_sources}",
         f"Сводки: до {limits.max_digests_per_day}/день (сегодня {ent.digests_today})",
         f"Окно: до {limits.max_digest_days} дн.",
