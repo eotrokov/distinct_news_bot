@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
+from bot.channel_presets import CHANNEL_PRESETS, ChannelPreset
 from bot.models import Source
 
 # Reply keyboard labels (must match handlers)
@@ -135,7 +136,26 @@ def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
     rows.append(
         [InlineKeyboardButton("Добавить канал", callback_data="m:src_add")]
     )
+    rows.append(
+        [InlineKeyboardButton("Готовые наборы", callback_data="m:src_presets")]
+    )
     rows.append([InlineKeyboardButton("« Меню", callback_data="m:home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def channel_presets_keyboard(
+    presets: tuple[ChannelPreset, ...] = CHANNEL_PRESETS,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                f"{preset.title} ({preset.count})",
+                callback_data=f"m:src_preset:{preset.slug}",
+            )
+        ]
+        for preset in presets
+    ]
+    rows.append([InlineKeyboardButton("« Источники", callback_data="m:sources")])
     return InlineKeyboardMarkup(rows)
 
 
