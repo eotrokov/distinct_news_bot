@@ -25,7 +25,7 @@ def test_seo_igaming_preset_channels():
     ]
 
 
-def test_add_channel_preset_respects_plan_limit(tmp_path):
+def test_add_channel_preset_fits_trial_plan_limit(tmp_path):
     preset = get_channel_preset("seo-igaming")
     assert preset is not None
     db = Database(str(tmp_path / "presets.sqlite3"))
@@ -39,6 +39,11 @@ def test_add_channel_preset_respects_plan_limit(tmp_path):
         "@burzhunet",
         "@alaevseo",
         "@bez_seo",
+        "@seoreposts",
+        "@seo4robots",
+        "@shakinru",
+        "@notjohnmu",
+        "@seolife",
+        "@sealytics",
     ]
-    assert len(skipped) == len(preset.channels) - len(added)
-    assert all("лимит плана 5" in item for item in skipped)
+    assert skipped == []
