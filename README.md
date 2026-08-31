@@ -114,11 +114,10 @@ docker compose logs -f bot
 
 ### Веб-морда (статистика)
 
-После деплоя dashboard доступен по HTTP и HTTPS:
+После деплоя dashboard доступен на порту 8080 (основной nginx на 80/443 не трогается):
 
 ```bash
-open "http://your.server/"
-open "https://your.server/"   # самоподписанный сертификат
+open "http://your.server:8080/"
 ```
 
 Страницы:
@@ -164,6 +163,6 @@ export DEPLOY_USER=ubuntu
 | `FETCH_CONCURRENCY` | параллельных запросов к t.me (по умолчанию 5) |
 | `FETCH_CACHE_TTL_SECONDS` | TTL кэша HTML каналов в секундах (по умолчанию 120) |
 | `ADMIN_USER_IDS` | telegram user id через запятую для `/grant` и `/stats` |
-| `DASHBOARD_PORT` | порт внутри контейнера (по умолчанию 8080; снаружи проброшен 443) |
+| `DASHBOARD_PORT` | порт внутри контейнера (по умолчанию 8080; снаружи проброшен 8080) |
 | `PRO_STARS_PRICE` / `PLUS_STARS_PRICE` | цена подписки в Stars |
 | `LOG_LEVEL` | `INFO` / `DEBUG` |

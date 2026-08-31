@@ -78,20 +78,19 @@ ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && \
   docker builder prune -f --filter until=72h >/dev/null 2>&1 || true; \
   docker compose up -d --build --remove-orphans && docker compose ps"
 
-echo "==> Publishing dashboard on ports 80 and 443 via nginx"
-ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/setup-dashboard-nginx.sh $(printf %q "$DEPLOY_PATH") 8080 || \
-  bash $(printf %q "$DEPLOY_PATH")/deploy/setup-dashboard-nginx.sh $(printf %q "$DEPLOY_PATH") 8080"
+echo "==> Restoring host nginx proxy on ports 80 and 443"
+ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/restore-nginx-proxy.sh || \
+  bash $(printf %q "$DEPLOY_PATH")/deploy/restore-nginx-proxy.sh"
 
-echo "==> Opening dashboard ports 80 and 443 on server firewall"
-ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 80 || bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 80 || true"
-ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 443 || bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 443 || true"
+echo "==> Opening dashboard port 8080 on server firewall"
+ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 8080 || \
+  bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 8080 || true"
 
 echo "==> Recent logs"
 ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && docker compose logs --tail=40 bot"
 
 echo "==> Dashboard status"
 ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && docker compose ps dashboard && \
-  (curl -kfsS https://127.0.0.1/health && echo) || \
   (curl -fsS http://127.0.0.1:8080/health && echo) || echo 'dashboard health check failed'"
 
 echo "==> Deploy finished"
