@@ -2,7 +2,7 @@
 # Open dashboard port on common Linux firewalls (best-effort).
 set -euo pipefail
 
-PORT="${1:-8080}"
+PORT="${1:-443}"
 
 run_root() {
   if [[ "$(id -u)" -eq 0 ]]; then

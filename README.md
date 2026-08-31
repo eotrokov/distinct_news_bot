@@ -114,10 +114,10 @@ docker compose logs -f bot
 
 ### Веб-морда (статистика)
 
-После `docker compose up -d` dashboard доступен на порту `8080` хоста без авторизации.
+После `docker compose up -d` dashboard доступен на порту `443` хоста без авторизации.
 
 ```bash
-open "http://your.server:8080/"
+open "http://your.server:443/"
 ```
 
 Страницы:
@@ -163,6 +163,6 @@ export DEPLOY_USER=ubuntu
 | `FETCH_CONCURRENCY` | параллельных запросов к t.me (по умолчанию 5) |
 | `FETCH_CACHE_TTL_SECONDS` | TTL кэша HTML каналов в секундах (по умолчанию 120) |
 | `ADMIN_USER_IDS` | telegram user id через запятую для `/grant` и `/stats` |
-| `DASHBOARD_PORT` | порт dashboard внутри контейнера (по умолчанию 8080) |
+| `DASHBOARD_PORT` | порт внутри контейнера (по умолчанию 8080; снаружи проброшен 443) |
 | `PRO_STARS_PRICE` / `PLUS_STARS_PRICE` | цена подписки в Stars |
 | `LOG_LEVEL` | `INFO` / `DEBUG` |
