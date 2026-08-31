@@ -28,5 +28,39 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  dashboard:
+    image: distinct-news-bot:latest
+    container_name: distinct-news-dashboard
+    restart: unless-stopped
+    command: ["python", "-m", "dashboard"]
+    env_file:
+      - .env
+    environment:
+      BOT_DB: /app/data/bot.sqlite3
+      DASHBOARD_PORT: "8080"
+    volumes:
+      - bot-data:/app/data:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      - bot
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
 volumes:
   bot-data:

@@ -50,3 +50,37 @@ def test_db_topics(tmp_path):
     assert db.remove_topic(user_id, "ai") in {True, False}
     assert db.clear_topics(user_id) >= 0
     assert db.list_topics(user_id) == []
+
+
+def test_db_digest_events_and_stats(tmp_path):
+    db = Database(str(tmp_path / "stats.sqlite3"))
+    user_id = 100
+    group_id = -200
+    db.ensure_user(user_id)
+    db.ensure_user(group_id)
+    db.add_source(user_id, "telegram", "ch1", "@ch1")
+    db.add_source(group_id, "telegram", "ch2", "@ch2")
+    db.add_topic(user_id, "seo")
+
+    db.log_digest_event(user_id, 5, trigger="manual")
+    db.log_digest_event(user_id, 3, trigger="command")
+    db.log_digest_event(group_id, 1, trigger="scheduled")
+
+    assert db.count_digest_events_since(7) == 3
+
+    overview = db.get_overview_stats()
+    assert overview.total_users == 2
+    assert overview.private_users == 1
+    assert overview.group_users == 1
+    assert overview.total_sources == 2
+    assert overview.digests_7d == 3
+    assert overview.plan_trial == 2
+
+    rows = db.list_users_with_stats()
+    assert len(rows) == 2
+    by_id = {row.user_id: row for row in rows}
+    assert by_id[user_id].sources_count == 1
+    assert by_id[user_id].topics_count == 1
+    assert by_id[user_id].digests_7d == 2
+    assert by_id[group_id].is_group is True
+    assert by_id[group_id].digests_7d == 1

@@ -11,6 +11,7 @@ RUN apt-get update \
 
 COPY pyproject.toml README.md ./
 COPY bot ./bot
+COPY dashboard ./dashboard
 
 RUN pip install --no-cache-dir .
 

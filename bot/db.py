@@ -4,6 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Iterator
 
 from bot.models import Source, SourceType
@@ -13,6 +14,42 @@ from bot.schedule import UserSchedule
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@dataclass(frozen=True)
+class OverviewStats:
+    total_users: int
+    private_users: int
+    group_users: int
+    total_sources: int
+    paid_users: int
+    plan_trial: int
+    plan_free: int
+    plan_pro: int
+    plan_plus: int
+    scheduled_users: int
+    active_7d: int
+    active_30d: int
+    digests_today: int
+    digests_7d: int
+    new_users_7d: int
+
+
+@dataclass(frozen=True)
+class UserStatsRow:
+    user_id: int
+    is_group: bool
+    plan: str
+    plan_expires_at: datetime | None
+    sources_count: int
+    topics_count: int
+    seen_count: int
+    last_digest_at: datetime | None
+    digests_7d: int
+    created_at: datetime
+    schedule_enabled: bool
+    schedule_hour: int
+    schedule_minute: int
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -90,6 +127,20 @@ class Database:
                     ON seen_items(user_id, seen_at);
                 CREATE INDEX IF NOT EXISTS idx_topics_user
                     ON topics(user_id);
+
+                CREATE TABLE IF NOT EXISTS digest_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    delivered_at TEXT NOT NULL,
+                    items_count INTEGER NOT NULL DEFAULT 0,
+                    trigger TEXT NOT NULL DEFAULT 'manual',
+                    FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_digest_events_user_at
+                    ON digest_events(user_id, delivered_at);
+                CREATE INDEX IF NOT EXISTS idx_digest_events_at
+                    ON digest_events(delivered_at);
                 """
             )
             self._ensure_user_schedule_columns(conn)
@@ -504,9 +555,164 @@ class Database:
             ).fetchone()
         return int(row["c"])
 
+    def log_digest_event(
+        self,
+        user_id: int,
+        items_count: int,
+        *,
+        trigger: str = "manual",
+    ) -> None:
+        self.ensure_user(user_id)
+        now = _utc_now().isoformat()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO digest_events(user_id, delivered_at, items_count, trigger)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, now, max(0, int(items_count)), trigger),
+            )
+
+    def count_digest_events_since(self, days: int) -> int:
+        cutoff = (_utc_now() - timedelta(days=days)).isoformat()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM digest_events
+                WHERE delivered_at >= ?
+                """,
+                (cutoff,),
+            ).fetchone()
+        return int(row["c"])
+
+    def get_overview_stats(self) -> OverviewStats:
+        now = _utc_now()
+        cutoff_7d = (now - timedelta(days=7)).isoformat()
+        cutoff_30d = (now - timedelta(days=30)).isoformat()
+        today = now.date().isoformat()
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_users,
+                    SUM(CASE WHEN user_id > 0 THEN 1 ELSE 0 END) AS private_users,
+                    SUM(CASE WHEN user_id < 0 THEN 1 ELSE 0 END) AS group_users,
+                    SUM(CASE WHEN plan IN ('pro', 'plus') THEN 1 ELSE 0 END) AS paid_users,
+                    SUM(CASE WHEN plan = 'trial' THEN 1 ELSE 0 END) AS plan_trial,
+                    SUM(CASE WHEN plan = 'free' THEN 1 ELSE 0 END) AS plan_free,
+                    SUM(CASE WHEN plan = 'pro' THEN 1 ELSE 0 END) AS plan_pro,
+                    SUM(CASE WHEN plan = 'plus' THEN 1 ELSE 0 END) AS plan_plus,
+                    SUM(CASE WHEN schedule_enabled = 1 THEN 1 ELSE 0 END) AS scheduled_users,
+                    SUM(CASE WHEN last_digest_at >= ? THEN 1 ELSE 0 END) AS active_7d,
+                    SUM(CASE WHEN last_digest_at >= ? THEN 1 ELSE 0 END) AS active_30d,
+                    SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS new_users_7d
+                FROM users
+                """,
+                (cutoff_7d, cutoff_30d, cutoff_7d),
+            ).fetchone()
+            sources_row = conn.execute(
+                "SELECT COUNT(*) AS c FROM sources"
+            ).fetchone()
+            digests_today_row = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM digest_events
+                WHERE date(delivered_at) = ?
+                """,
+                (today,),
+            ).fetchone()
+            digests_7d_row = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM digest_events
+                WHERE delivered_at >= ?
+                """,
+                (cutoff_7d,),
+            ).fetchone()
+        return OverviewStats(
+            total_users=int(row["total_users"] or 0),
+            private_users=int(row["private_users"] or 0),
+            group_users=int(row["group_users"] or 0),
+            total_sources=int(sources_row["c"] or 0),
+            paid_users=int(row["paid_users"] or 0),
+            plan_trial=int(row["plan_trial"] or 0),
+            plan_free=int(row["plan_free"] or 0),
+            plan_pro=int(row["plan_pro"] or 0),
+            plan_plus=int(row["plan_plus"] or 0),
+            scheduled_users=int(row["scheduled_users"] or 0),
+            active_7d=int(row["active_7d"] or 0),
+            active_30d=int(row["active_30d"] or 0),
+            digests_today=int(digests_today_row["c"] or 0),
+            digests_7d=int(digests_7d_row["c"] or 0),
+            new_users_7d=int(row["new_users_7d"] or 0),
+        )
+
+    def list_users_with_stats(
+        self,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[UserStatsRow]:
+        cutoff_7d = (_utc_now() - timedelta(days=7)).isoformat()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    u.user_id,
+                    u.plan,
+                    u.plan_expires_at,
+                    u.created_at,
+                    u.last_digest_at,
+                    u.schedule_enabled,
+                    u.schedule_hour,
+                    u.schedule_minute,
+                    (
+                        SELECT COUNT(*) FROM sources s WHERE s.user_id = u.user_id
+                    ) AS sources_count,
+                    (
+                        SELECT COUNT(*) FROM topics t WHERE t.user_id = u.user_id
+                    ) AS topics_count,
+                    (
+                        SELECT COUNT(*) FROM seen_items si WHERE si.user_id = u.user_id
+                    ) AS seen_count,
+                    (
+                        SELECT COUNT(*) FROM digest_events de
+                        WHERE de.user_id = u.user_id AND de.delivered_at >= ?
+                    ) AS digests_7d
+                FROM users u
+                ORDER BY
+                    CASE WHEN u.last_digest_at IS NULL THEN 1 ELSE 0 END,
+                    u.last_digest_at DESC,
+                    u.created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (cutoff_7d, limit, offset),
+            ).fetchall()
+        return [self._row_to_user_stats(row) for row in rows]
+
     def delete_user_data(self, user_id: int) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+
+    @staticmethod
+    def _row_to_user_stats(row: sqlite3.Row) -> UserStatsRow:
+        user_id = int(row["user_id"])
+        created_at = _parse_dt(row["created_at"]) or _utc_now()
+        return UserStatsRow(
+            user_id=user_id,
+            is_group=user_id < 0,
+            plan=str(row["plan"] or "trial"),
+            plan_expires_at=_parse_dt(row["plan_expires_at"]),
+            sources_count=int(row["sources_count"] or 0),
+            topics_count=int(row["topics_count"] or 0),
+            seen_count=int(row["seen_count"] or 0),
+            last_digest_at=_parse_dt(row["last_digest_at"]),
+            digests_7d=int(row["digests_7d"] or 0),
+            created_at=created_at,
+            schedule_enabled=bool(row["schedule_enabled"]),
+            schedule_hour=int(row["schedule_hour"] if row["schedule_hour"] is not None else 9),
+            schedule_minute=int(
+                row["schedule_minute"] if row["schedule_minute"] is not None else 55
+            ),
+        )
 
     @staticmethod
     def _row_to_schedule(row: sqlite3.Row) -> UserSchedule:
