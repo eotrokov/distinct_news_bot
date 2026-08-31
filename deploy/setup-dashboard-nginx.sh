@@ -63,6 +63,14 @@ for site in /etc/nginx/sites-enabled/*; do
   fi
 done
 
+CONF_BACKUP="/etc/nginx/conf.d.distinct-news-bot-backup"
+run_root mkdir -p "$CONF_BACKUP"
+for conf in /etc/nginx/conf.d/*.conf; do
+  [[ -e "$conf" ]] || continue
+  base="$(basename "$conf")"
+  run_root mv "$conf" "${CONF_BACKUP}/${base}" 2>/dev/null || true
+done
+
 run_root cp "${APP_DIR}/deploy/nginx-dashboard.conf" \
   /etc/nginx/sites-available/distinct-news-dashboard
 run_root ln -sf /etc/nginx/sites-available/distinct-news-dashboard \
