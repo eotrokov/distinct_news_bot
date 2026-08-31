@@ -78,7 +78,14 @@ ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && \
   docker builder prune -f --filter until=72h >/dev/null 2>&1 || true; \
   docker compose up -d --build --remove-orphans && docker compose ps"
 
+echo "==> Opening dashboard port 8080 on server firewall"
+ssh_cmd "bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 8080 || true"
+
 echo "==> Recent logs"
 ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && docker compose logs --tail=40 bot"
+
+echo "==> Dashboard status"
+ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && docker compose ps dashboard && \
+  (curl -fsS http://127.0.0.1:8080/health && echo) || echo 'dashboard health check failed'"
 
 echo "==> Deploy finished"
