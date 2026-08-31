@@ -140,6 +140,7 @@ async def send_digest_to_chat(
     days: int | None = None,
     *,
     only_unseen: bool = False,
+    trigger: str = "manual",
 ) -> None:
     if not update.effective_user or not update.effective_message:
         return
@@ -181,7 +182,7 @@ async def send_digest_to_chat(
         analysis, days_used, errors=errors, topics=topics
     )
     _store_digest_pages(context, chat_id, pages)
-    digest.mark_digest_delivered(chat_id, items)
+    digest.mark_digest_delivered(chat_id, items, trigger=trigger)
     markup = (
         digest_page_keyboard(0, len(pages))
         if len(pages) > 1

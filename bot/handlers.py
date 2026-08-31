@@ -598,7 +598,7 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(str(exc))
         return
     await send_digest_to_chat(
-        update, context, days=days, only_unseen=only_unseen
+        update, context, days=days, only_unseen=only_unseen, trigger="command"
     )
 
 

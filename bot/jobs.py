@@ -73,7 +73,7 @@ async def deliver_digest_to_user(
     sessions = context.application.bot_data.setdefault("digest_sessions", {})
     sessions[user_id] = {"pages": pages, "page": 0}
 
-    digest.mark_digest_delivered(user_id, items)
+    digest.mark_digest_delivered(user_id, items, trigger="scheduled")
     markup = back_home_keyboard()
     if len(pages) > 1:
         from bot.keyboards import digest_page_keyboard

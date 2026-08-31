@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Пользователи — Distinct News{% endblock %}
+{% block content %}
+<h2 class="section-title">Пользователи ({{ users|length }})</h2>
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>План</th>
+      <th>Каналы</th>
+      <th>Темы</th>
+      <th>Просмотрено</th>
+      <th>Последний дайджест</th>
+      <th>Дайджестов 7д</th>
+      <th>Регистрация</th>
+      <th>Расписание</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for user in users %}
+    <tr>
+      <td>
+        {{ user.user_id }}
+        {% if user.is_group %}<span class="badge">группа</span>{% endif %}
+      </td>
+      <td>
+        {{ user.plan }}
+        {% if user.plan_expires_at %}
+        <br><small>{{ user.plan_expires_at|fmt_dt }}</small>
+        {% endif %}
+      </td>
+      <td>{{ user.sources_count }}</td>
+      <td>{{ user.topics_count }}</td>
+      <td>{{ user.seen_count }}</td>
+      <td>{{ user.last_digest_at|fmt_dt }}</td>
+      <td>{{ user.digests_7d }}</td>
+      <td>{{ user.created_at|fmt_dt }}</td>
+      <td>
+        {% if user.schedule_enabled %}
+        {{ "%02d"|format(user.schedule_hour) }}:{{ "%02d"|format(user.schedule_minute) }}
+        {% else %}
+        —
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="9">Пока нет пользователей</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

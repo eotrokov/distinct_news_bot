@@ -292,13 +292,20 @@ class DigestService:
             logger.exception("Unexpected fetch error for source %s", source.id)
             return [], f"ошибка: {exc}"
 
-    def mark_digest_delivered(self, user_id: int, items: list[NewsItem]) -> None:
+    def mark_digest_delivered(
+        self,
+        user_id: int,
+        items: list[NewsItem],
+        *,
+        trigger: str = "manual",
+    ) -> None:
         now = datetime.now(timezone.utc)
         fingerprints = [
             (fingerprint_for(item), item.url, item.title) for item in items
         ]
         self.db.mark_seen(user_id, fingerprints)
         self.db.set_last_digest_at(user_id, now)
+        self.db.log_digest_event(user_id, len(items), trigger=trigger)
         self.db.cleanup_seen(user_id)
 
     def format_digest(
