@@ -114,18 +114,17 @@ docker compose logs -f bot
 
 ### Веб-морда (статистика)
 
-В `.env` задайте `DASHBOARD_TOKEN` (длинная случайная строка). После `docker compose up -d` dashboard слушает `127.0.0.1:8080` на хосте.
+В `.env` задайте `DASHBOARD_TOKEN` (длинная случайная строка). После `docker compose up -d` dashboard доступен на порту `8080` хоста.
 
 ```bash
-# локально или через SSH-туннель
-open "http://127.0.0.1:8080/?token=YOUR_DASHBOARD_TOKEN"
+open "http://your.server:8080/?token=YOUR_DASHBOARD_TOKEN"
 ```
 
 Страницы:
 - `/` — обзор (пользователи, планы, активность, дайджесты)
 - `/users` — таблица workspace с каналами, темами и последней активностью
 
-Авторизация: query-параметр `?token=...` или заголовок `Authorization: Bearer ...`. Для выноса в интернет используйте nginx с ограничением по IP.
+Авторизация: query-параметр `?token=...` или заголовок `Authorization: Bearer ...`. Порт открыт наружу — обязательно используйте длинный `DASHBOARD_TOKEN` и при необходимости ограничьте доступ файрволом.
 
 ## Деплой на VPS (рядом с существующим ботом)
 
