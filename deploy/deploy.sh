@@ -78,11 +78,12 @@ ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && \
   docker builder prune -f --filter until=72h >/dev/null 2>&1 || true; \
   docker compose up -d --build --remove-orphans && docker compose ps"
 
-echo "==> Publishing dashboard on port 443 via nginx"
-ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/setup-dashboard-nginx.sh $(printf %q "$DEPLOY_PATH") 8080 443 || \
-  bash $(printf %q "$DEPLOY_PATH")/deploy/setup-dashboard-nginx.sh $(printf %q "$DEPLOY_PATH") 8080 443"
+echo "==> Publishing dashboard on ports 80 and 443 via nginx"
+ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/setup-dashboard-nginx.sh $(printf %q "$DEPLOY_PATH") 8080 || \
+  bash $(printf %q "$DEPLOY_PATH")/deploy/setup-dashboard-nginx.sh $(printf %q "$DEPLOY_PATH") 8080"
 
-echo "==> Opening dashboard port 443 on server firewall"
+echo "==> Opening dashboard ports 80 and 443 on server firewall"
+ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 80 || bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 80 || true"
 ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 443 || bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 443 || true"
 
 echo "==> Recent logs"
