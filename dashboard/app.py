@@ -10,7 +10,6 @@ from starlette.routing import Route
 from starlette.templating import Jinja2Templates
 
 from bot.db import Database
-from dashboard.auth import TokenAuthMiddleware
 from dashboard.config import DashboardSettings
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -53,7 +52,6 @@ def create_app(settings: DashboardSettings | None = None) -> Starlette:
             Route("/health", health),
         ],
     )
-    app.add_middleware(TokenAuthMiddleware, token=settings.token)
     app.state.db = db
     app.state.settings = settings
     return app

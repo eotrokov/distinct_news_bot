@@ -6,19 +6,17 @@ from dashboard.app import create_app
 from dashboard.config import DashboardSettings
 
 
-def test_dashboard_requires_token(tmp_path):
-    db_path = str(tmp_path / "dash.sqlite3")
+def test_dashboard_is_public(tmp_path):
     settings = DashboardSettings(
-        db_path=db_path,
-        token="secret-token",
+        db_path=str(tmp_path / "dash.sqlite3"),
         host="127.0.0.1",
         port=8080,
     )
     app = create_app(settings)
     client = TestClient(app)
 
-    assert client.get("/").status_code == 401
-    assert client.get("/users").status_code == 401
+    assert client.get("/").status_code == 200
+    assert client.get("/users").status_code == 200
     assert client.get("/health").status_code == 200
     assert client.get("/health").text == "ok"
 
@@ -34,23 +32,18 @@ def test_dashboard_shows_stats(tmp_path):
 
     settings = DashboardSettings(
         db_path=db_path,
-        token="secret-token",
         host="127.0.0.1",
         port=8080,
     )
     app = create_app(settings)
     client = TestClient(app)
-    headers = {"Authorization": "Bearer secret-token"}
 
-    index = client.get("/", headers=headers)
+    index = client.get("/")
     assert index.status_code == 200
     assert "Всего workspace" in index.text
     assert ">1<" in index.text
 
-    users = client.get("/users", headers=headers)
+    users = client.get("/users")
     assert users.status_code == 200
     assert "42" in users.text
     assert "@news" not in users.text
-
-    query = client.get("/?token=secret-token")
-    assert query.status_code == 200

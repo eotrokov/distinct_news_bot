@@ -114,17 +114,15 @@ docker compose logs -f bot
 
 ### Веб-морда (статистика)
 
-В `.env` задайте `DASHBOARD_TOKEN` (длинная случайная строка). После `docker compose up -d` dashboard доступен на порту `8080` хоста.
+После `docker compose up -d` dashboard доступен на порту `8080` хоста без авторизации.
 
 ```bash
-open "http://your.server:8080/?token=YOUR_DASHBOARD_TOKEN"
+open "http://your.server:8080/"
 ```
 
 Страницы:
 - `/` — обзор (пользователи, планы, активность, дайджесты)
 - `/users` — таблица workspace с каналами, темами и последней активностью
-
-Авторизация: query-параметр `?token=...` или заголовок `Authorization: Bearer ...`. Порт открыт наружу — обязательно используйте длинный `DASHBOARD_TOKEN` и при необходимости ограничьте доступ файрволом.
 
 ## Деплой на VPS (рядом с существующим ботом)
 
@@ -165,7 +163,6 @@ export DEPLOY_USER=ubuntu
 | `FETCH_CONCURRENCY` | параллельных запросов к t.me (по умолчанию 5) |
 | `FETCH_CACHE_TTL_SECONDS` | TTL кэша HTML каналов в секундах (по умолчанию 120) |
 | `ADMIN_USER_IDS` | telegram user id через запятую для `/grant` и `/stats` |
-| `DASHBOARD_TOKEN` | токен доступа к веб-морде (обязателен для сервиса `dashboard`) |
 | `DASHBOARD_PORT` | порт dashboard внутри контейнера (по умолчанию 8080) |
 | `PRO_STARS_PRICE` / `PLUS_STARS_PRICE` | цена подписки в Stars |
 | `LOG_LEVEL` | `INFO` / `DEBUG` |
