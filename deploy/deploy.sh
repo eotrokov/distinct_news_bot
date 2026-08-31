@@ -79,7 +79,7 @@ ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && \
   docker compose up -d --build --remove-orphans && docker compose ps"
 
 echo "==> Opening dashboard port 8080 on server firewall"
-ssh_cmd "bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 8080 || true"
+ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 8080 || bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 8080 || true"
 
 echo "==> Recent logs"
 ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && docker compose logs --tail=40 bot"
