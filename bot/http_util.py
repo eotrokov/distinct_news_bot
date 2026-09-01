@@ -56,9 +56,12 @@ class HttpService:
         async with self._sem:
             for attempt in range(self.max_retries + 1):
                 try:
-                    response = await self._client.get(
-                        url, follow_redirects=follow_redirects
-                    )
+                    if follow_redirects:
+                        response = await self._client.get(url)
+                    else:
+                        response = await self._client.get(
+                            url, follow_redirects=False
+                        )
                     response.raise_for_status()
                     text = response.text
                     if use_cache and self.cache_ttl_seconds > 0:
