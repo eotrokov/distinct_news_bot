@@ -42,6 +42,8 @@ from bot.menu import (
     show_topics_panel,
 )
 from bot.sources_ops import (
+    add_from_text,
+    add_rss_from_text,
     add_single_source,
     add_telegram_from_text,
     format_add_report,
@@ -51,18 +53,19 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """\
-SEO-дайджест из Telegram-каналов: без дублей, рекламы и оффтопа.
+SEO-дайджест из Telegram-каналов и RSS-блогов: без дублей, рекламы и оффтопа.
 
-Работает в личке и в групповых чатах. В группе у чата свои каналы и расписание;
+Работает в личке и в групповых чатах. В группе у чата свои источники и расписание;
 настраивать могут администраторы. Оплата Stars — только в личке с ботом.
 
 Команды:
 /menu — меню
 /add @channel — добавить канал
 /add @a @b — несколько каналов
+/add rss https://site.com/feed/ — RSS-фид
 /addlist <ссылка> — папка t.me/addlist/…
-/remove <id> — удалить канал
-/sources — список каналов
+/remove <id> — удалить источник
+/sources — список источников
 /topic add <тема> — тема-фильтр
 /topics — список тем
 /news — дайджест
@@ -79,6 +82,7 @@ SEO-дайджест из Telegram-каналов: без дублей, рекл
 
 Утро: /schedule on 9:55 — дайджест за вчера (в личке или группе).
 Добавьте бота в группу → /start → /add @channel → /news.
+Готовый набор SEO-блогов: Источники → Готовые наборы → SEO-блоги (RSS).
 """
 
 
@@ -116,7 +120,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         sources = db.list_sources(chat_id)
         await update.message.reply_text(group_welcome_text(title))
         await update.message.reply_text(
-            "Меню:" if sources else "Добавьте каналы: /add @channel",
+            "Меню:" if sources else "Добавьте каналы или RSS: /add @channel",
             reply_markup=main_inline_keyboard(),
         )
         return
@@ -183,6 +187,21 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "folder",
             "list",
         }
+        rss_aliases = {"rss", "feed", "atom", "blog"}
+        if args and args[0].lower() in rss_aliases:
+            from bot.fetchers.rss import parse_rss_urls
+
+            rest = " ".join(args[1:])
+            if len(parse_rss_urls(rest)) > 1:
+                added, skipped = add_rss_from_text(db, chat_id, rest)
+                await update.message.reply_text(
+                    format_add_report(
+                        folder_title=None, added=added, skipped=skipped
+                    ),
+                    reply_markup=kb,
+                )
+                return
+            # Single feed (optional title) falls through to parse_add_args.
         if args and args[0].lower() in type_aliases:
             rest = " ".join(args[1:])
             if extract_addlist_slug(rest) and "addlist" in rest.lower():
@@ -197,9 +216,12 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 )
                 return
         else:
+            from bot.fetchers.rss import parse_rss_urls
+
             handles = parse_telegram_handles(joined)
-            if len(handles) > 1:
-                added, skipped = add_telegram_from_text(db, chat_id, joined)
+            rss_urls = parse_rss_urls(joined)
+            if len(handles) + len(rss_urls) > 1 or (rss_urls and handles):
+                added, skipped = add_from_text(db, chat_id, joined)
                 await update.message.reply_text(
                     format_add_report(folder_title=None, added=added, skipped=skipped),
                     reply_markup=kb,
@@ -219,8 +241,9 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(str(exc))
         return
 
+    kind = "RSS" if source.source_type == "rss" else "канал"
     await update.message.reply_text(
-        f"Добавлен канал #{source.id}: {source.title}\n"
+        f"Добавлен {kind} #{source.id}: {source.title}\n"
         f"`{source.identifier}`",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=kb,
@@ -517,7 +540,7 @@ async def delete_me_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     clear_awaiting(context)
     where = "этого чата" if is_group_chat(update.effective_chat) else "ваши"
     await update.message.reply_text(
-        f"Все данные {where} удалены (каналы, темы, просмотренное, подписка).\n"
+        f"Все данные {where} удалены (источники, темы, просмотренное, подписка).\n"
         "Нажмите /start, чтобы начать заново.",
         reply_markup=_reply_kb(update),
     )
@@ -578,7 +601,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "📊 Статистика\n"
         f"Пользователи/чаты: {db.count_users()}\n"
-        f"Каналы: {db.count_sources()}\n"
+        f"Источники: {db.count_sources()}\n"
         f"Платящие (pro/plus): {db.count_paid_users()}"
     )
 

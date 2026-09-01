@@ -39,7 +39,7 @@ async def send_plan_invoice(
     price = stars_price_for(plan, settings)
     title = f"Distinct News {PLAN_CATALOG[plan].title}"
     description = (
-        f"{PLAN_CATALOG[plan].title}: до {PLAN_CATALOG[plan].max_sources} каналов, "
+        f"{PLAN_CATALOG[plan].title}: до {PLAN_CATALOG[plan].max_sources} источников, "
         f"{PLAN_CATALOG[plan].max_digests_per_day} сводок/день, расписание. 30 дней."
     )
     payload = f"plan:{plan}:{user_id}"

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from bot.channel_presets import get_channel_preset
+from bot.channel_presets import get_channel_preset, get_rss_preset
 from bot.db import Database
-from bot.sources_ops import add_telegram_channels
+from bot.sources_ops import add_rss_feeds, add_telegram_channels
 
 
 def test_seo_igaming_preset_channels():
@@ -47,3 +47,48 @@ def test_add_channel_preset_fits_trial_plan_limit(tmp_path):
         "@sealytics",
     ]
     assert skipped == []
+
+
+def test_seo_blogs_rss_preset():
+    preset = get_rss_preset("seo-blogs")
+    assert preset is not None
+    assert preset.count == 10
+    assert [feed.title for feed in preset.feeds] == [
+        "Ahrefs Blog",
+        "Backlinko",
+        "Moz Blog",
+        "Search Engine Journal",
+        "Search Engine Land",
+        "Semrush Blog",
+        "Google Search Central Blog",
+        "Screaming Frog Blog",
+        "Aleyda Solis",
+        "Marie Haynes",
+    ]
+
+
+def test_add_rss_preset_fits_trial_plan_limit(tmp_path):
+    preset = get_rss_preset("seo-blogs")
+    assert preset is not None
+    db = Database(str(tmp_path / "rss-presets.sqlite3"))
+    uid = 202
+
+    added, skipped = add_rss_feeds(db, uid, list(preset.feeds))
+
+    assert skipped == []
+    assert len(added) == 10
+    assert added[0] == "Ahrefs Blog"
+    sources = db.list_sources(uid)
+    assert all(s.source_type == "rss" for s in sources)
+    assert {s.identifier for s in sources} == {
+        "https://ahrefs.com/blog/feed",
+        "https://backlinko.com/feed",
+        "https://moz.com/posts/rss/blog",
+        "https://www.searchenginejournal.com/feed",
+        "https://searchengineland.com/feed",
+        "https://www.semrush.com/blog/feed",
+        "https://developers.google.com/search/blog/rss.xml",
+        "https://www.screamingfrog.co.uk/feed",
+        "https://www.aleydasolis.com/en/feed",
+        "https://www.mariehaynes.com/feed",
+    }

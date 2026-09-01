@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 
-from bot.channel_presets import CHANNEL_PRESETS, ChannelPreset
+from bot.channel_presets import CHANNEL_PRESETS, RSS_PRESETS, ChannelPreset, RssPreset
 from bot.models import Source
 
 # Reply keyboard labels (must match handlers)
@@ -27,16 +27,18 @@ REPLY_BUTTONS = {
 }
 
 TELEGRAM_SOURCE_PROMPT = (
-    "Пришлите публичный канал:\n"
+    "Пришлите источник:\n"
     "• @channel или https://t.me/channel\n"
-    "• несколько каналов через пробел/строки\n"
+    "• RSS: https://ahrefs.com/blog/feed/\n"
+    "• несколько каналов/фидов через пробел/строки\n"
     "• ссылку папки https://t.me/addlist/… — затем список @каналов из папки "
     "(автоимпорт списка каналов Telegram не отдаёт)"
 )
 
 ONBOARD_PROMPT = (
-    "Привет! Я собираю сводку из ваших Telegram-каналов без дублей.\n\n"
-    "Пришлите 1–3 публичных канала (@name), и я сразу сделаю пробную сводку."
+    "Привет! Я собираю сводку из ваших Telegram-каналов и RSS-блогов без дублей.\n\n"
+    "Пришлите 1–3 публичных канала (@name) или RSS-фид "
+    "(https://site.com/feed/), и я сразу сделаю пробную сводку."
 )
 
 
@@ -134,7 +136,7 @@ def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(label, callback_data=f"m:src_del:{source.id}")]
         )
     rows.append(
-        [InlineKeyboardButton("Добавить канал", callback_data="m:src_add")]
+        [InlineKeyboardButton("Добавить источник", callback_data="m:src_add")]
     )
     rows.append(
         [InlineKeyboardButton("Готовые наборы", callback_data="m:src_presets")]
@@ -145,6 +147,7 @@ def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
 
 def channel_presets_keyboard(
     presets: tuple[ChannelPreset, ...] = CHANNEL_PRESETS,
+    rss_presets: tuple[RssPreset, ...] = RSS_PRESETS,
 ) -> InlineKeyboardMarkup:
     rows = [
         [
@@ -155,6 +158,17 @@ def channel_presets_keyboard(
         ]
         for preset in presets
     ]
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    f"{preset.title} ({preset.count})",
+                    callback_data=f"m:src_preset:{preset.slug}",
+                )
+            ]
+            for preset in rss_presets
+        ]
+    )
     rows.append([InlineKeyboardButton("« Источники", callback_data="m:sources")])
     return InlineKeyboardMarkup(rows)
 

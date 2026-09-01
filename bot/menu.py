@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from bot.channel_presets import CHANNEL_PRESETS, get_channel_preset
+from bot.channel_presets import CHANNEL_PRESETS, RSS_PRESETS, get_channel_preset, get_rss_preset
 from bot.db import Database
 from bot.digest import DigestService, parse_add_args
 from bot.keyboards import (
@@ -118,7 +118,7 @@ async def show_main_menu(
     text = MENU_TEXT
     if not is_private_chat(update.effective_chat):
         text = (
-            "Меню для этого чата. Каналы и расписание общие для группы.\n"
+        "Меню для этого чата. Источники и расписание общие для группы.\n"
             "Управлять настройками могут администраторы."
         )
     markup = main_inline_keyboard()
@@ -200,14 +200,18 @@ def sources_text(db: Database, user_id: int) -> str:
     sources = db.list_sources(user_id)
     if not sources:
         return (
-            "Каналов пока нет.\n"
-            "Добавьте: /add @channel, кнопка «Добавить канал» "
-            "или «Готовые наборы»"
+            "Источников пока нет.\n"
+            "Добавьте: /add @channel, /add rss https://site.com/feed/, "
+            "кнопка «Добавить источник» или «Готовые наборы»"
         )
-    lines = ["Каналы этого чата (нажмите, чтобы удалить):"]
+    lines = ["Источники этого чата (нажмите, чтобы удалить):"]
     for s in sources:
-        lines.append(f"#{s.id} {s.title}\n  {s.identifier}")
-        if s.source_type != "telegram":
+        if s.source_type == "rss":
+            lines.append(f"#{s.id} {s.title} [RSS]\n  {s.identifier}")
+        elif s.source_type == "telegram":
+            lines.append(f"#{s.id} {s.title}\n  {s.identifier}")
+        else:
+            lines.append(f"#{s.id} {s.title}\n  {s.identifier}")
             lines[-1] += f"\n  ⚠ устаревший тип [{s.source_type}] — удалите"
     return "\n".join(lines)
 
@@ -252,7 +256,7 @@ async def show_channel_presets_panel(
     edit: bool = False,
 ) -> None:
     clear_awaiting(context)
-    lines = ["Готовые наборы каналов:"]
+    lines = ["Готовые наборы источников:"]
     for preset in CHANNEL_PRESETS:
         lines.append(
             f"• {preset.title} — {preset.description} "
@@ -260,6 +264,11 @@ async def show_channel_presets_panel(
         )
         if preset.addlist_url:
             lines.append(f"  Папка: {preset.addlist_url}")
+    for preset in RSS_PRESETS:
+        lines.append(
+            f"• {preset.title} — {preset.description} "
+            f"({preset.count} фидов)"
+        )
     text = "\n".join(lines)
     markup = channel_presets_keyboard()
     if edit and update.callback_query and update.callback_query.message:
@@ -430,20 +439,33 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not await _require_manage(update, context, alert=True):
             return
         slug = data.removeprefix("m:src_preset:")
-        preset = get_channel_preset(slug)
-        if not preset:
+        channel_preset = get_channel_preset(slug)
+        rss_preset = get_rss_preset(slug)
+        if channel_preset:
+            from bot.sources_ops import add_telegram_channels, format_add_report
+
+            added, skipped = add_telegram_channels(
+                db, chat_id, list(channel_preset.channels)
+            )
+            report = format_add_report(
+                folder_title=channel_preset.title,
+                added=added,
+                skipped=skipped,
+            )
+            if channel_preset.addlist_url:
+                report += f"\nПапка Telegram: {channel_preset.addlist_url}"
+        elif rss_preset:
+            from bot.sources_ops import add_rss_feeds, format_add_report
+
+            added, skipped = add_rss_feeds(db, chat_id, list(rss_preset.feeds))
+            report = format_add_report(
+                folder_title=rss_preset.title,
+                added=added,
+                skipped=skipped,
+            )
+        else:
             await query.answer("Набор не найден.", show_alert=True)
             return
-        from bot.sources_ops import add_telegram_channels, format_add_report
-
-        added, skipped = add_telegram_channels(db, chat_id, list(preset.channels))
-        report = format_add_report(
-            folder_title=preset.title,
-            added=added,
-            skipped=skipped,
-        )
-        if preset.addlist_url:
-            report += f"\nПапка Telegram: {preset.addlist_url}"
         await query.edit_message_text(
             f"{report}\n\n{sources_text(db, chat_id)}",
             reply_markup=sources_keyboard(db.list_sources(chat_id)),
@@ -564,7 +586,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             else (
                 "В группе удобнее командой:\n"
                 "/add @channel\n"
-                "Несколько: /add @ch1 @ch2\n\n/cancel — отмена."
+                "Несколько: /add @ch1 @ch2\n"
+                "RSS: /add rss https://site.com/feed/\n\n/cancel — отмена."
             )
         )
         await query.edit_message_text(prompt, reply_markup=back_home_keyboard())
@@ -681,8 +704,9 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         if kind == "onboard":
             from bot.addlist import extract_addlist_slug, parse_telegram_handles
+            from bot.fetchers.rss import parse_rss_urls
             from bot.handlers import begin_addlist_import
-            from bot.sources_ops import add_telegram_from_text, format_add_report
+            from bot.sources_ops import add_from_text, format_add_report
 
             if extract_addlist_slug(text) and "addlist" in text.lower():
                 clear_awaiting(context)
@@ -690,15 +714,17 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 return
 
             handles = parse_telegram_handles(text)
-            if not handles:
+            rss_urls = parse_rss_urls(text)
+            if not handles and not rss_urls:
                 await update.message.reply_text(
-                    "Не нашёл каналов. Пришлите @name или https://t.me/name\n"
+                    "Не нашёл источников. Пришлите @name, https://t.me/name "
+                    "или RSS https://site.com/feed/\n"
                     "Или /cancel чтобы отменить.",
                     reply_markup=kb,
                 )
                 return
 
-            added, skipped = add_telegram_from_text(db, chat_id, text)
+            added, skipped = add_from_text(db, chat_id, text)
             clear_awaiting(context)
             await update.message.reply_text(
                 format_add_report(folder_title=None, added=added, skipped=skipped),
@@ -729,10 +755,11 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         if kind == "source":
             from bot.addlist import extract_addlist_slug, parse_telegram_handles
+            from bot.fetchers.rss import parse_rss_urls
             from bot.handlers import begin_addlist_import
             from bot.sources_ops import (
+                add_from_text,
                 add_single_source,
-                add_telegram_from_text,
                 format_add_report,
             )
 
@@ -742,8 +769,9 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 return
 
             handles = parse_telegram_handles(text)
-            if len(handles) > 1:
-                added, skipped = add_telegram_from_text(db, chat_id, text)
+            rss_urls = parse_rss_urls(text)
+            if len(handles) + len(rss_urls) > 1 or (handles and rss_urls):
+                added, skipped = add_from_text(db, chat_id, text)
                 clear_awaiting(context)
                 await update.message.reply_text(
                     format_add_report(
@@ -753,13 +781,17 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 )
                 return
 
-            source_type, identifier, title = parse_add_args(
-                ["telegram", *text.split()]
-            )
+            if rss_urls:
+                source_type, identifier, title = parse_add_args(text.split())
+            else:
+                source_type, identifier, title = parse_add_args(
+                    ["telegram", *text.split()]
+                )
             source = add_single_source(db, chat_id, source_type, identifier, title)
             clear_awaiting(context)
+            kind_label = "RSS" if source.source_type == "rss" else "канал"
             await update.message.reply_text(
-                f"Добавлен канал #{source.id}: {source.title}\n"
+                f"Добавлен {kind_label} #{source.id}: {source.title}\n"
                 f"{source.identifier}",
                 reply_markup=sources_keyboard(db.list_sources(chat_id)),
             )

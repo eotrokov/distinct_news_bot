@@ -30,8 +30,8 @@ async def _post_init(app: Application) -> None:
 
         commands = [
             BotCommand("news", "SEO-дайджест"),
-            BotCommand("add", "Добавить канал"),
-            BotCommand("sources", "Список каналов"),
+            BotCommand("add", "Добавить канал или RSS"),
+            BotCommand("sources", "Список источников"),
             BotCommand("schedule", "Авто-сводка"),
             BotCommand("menu", "Меню"),
             BotCommand("help", "Справка"),

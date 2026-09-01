@@ -100,7 +100,23 @@ def test_parse_add_args_rejects_legacy_types():
         parse_add_args(["ria", "main"])
         assert False, "expected ValueError"
     except ValueError as exc:
-        assert "Telegram" in str(exc)
+        assert "RSS" in str(exc)
+
+
+def test_parse_add_args_rss_keyword():
+    t, ident, title = parse_add_args(["rss", "https://ahrefs.com/blog/feed/"])
+    assert t == "rss"
+    assert ident == "https://ahrefs.com/blog/feed/"
+    assert title == "ahrefs.com"
+
+
+def test_parse_add_args_bare_feed_url():
+    t, ident, title = parse_add_args(
+        ["https://ahrefs.com/blog/feed/", "Ahrefs Blog"]
+    )
+    assert t == "rss"
+    assert ident == "https://ahrefs.com/blog/feed/"
+    assert title == "Ahrefs Blog"
 
 
 def test_format_digest_empty():

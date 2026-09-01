@@ -15,14 +15,20 @@ from bot.analyzer import NewsAnalyzer, item_urls
 from bot.config import Settings
 from bot.db import Database
 from bot.dedupe import fingerprint_for
-from bot.fetchers import FetchError, TelegramChannelFetcher
+from bot.fetchers import (
+    FetchError,
+    RssFetcher,
+    TelegramChannelFetcher,
+    looks_like_rss_url,
+    rss_title_from_url,
+)
 from bot.http_util import HttpService
 from bot.models import NewsItem, Source, SourceType
 from bot.topics import item_matches_topics
 
 logger = logging.getLogger(__name__)
 
-LEGACY_SOURCE_TYPES = frozenset({"rss", "ria", "facebook", "twitter"})
+LEGACY_SOURCE_TYPES = frozenset({"ria", "facebook", "twitter"})
 
 MIN_DIGEST_DAYS = 1
 MAX_DIGEST_DAYS = 30
@@ -101,6 +107,10 @@ class DigestService:
                 timeout=settings.fetch_timeout_seconds,
                 http=self.http,
             ),
+            "rss": RssFetcher(
+                timeout=settings.fetch_timeout_seconds,
+                http=self.http,
+            ),
         }
 
     async def aclose(self) -> None:
@@ -153,7 +163,10 @@ class DigestService:
         if not sources:
             return (
                 [],
-                ["Нет каналов. Добавьте через /add или кнопку «Источники»"],
+                [
+                    "Нет источников. Добавьте канал /add @channel "
+                    "или RSS /add rss https://site.com/feed/"
+                ],
                 topics,
                 days_used,
                 empty_analysis,
@@ -451,15 +464,16 @@ def format_digest(
 
 
 def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
-    """Parse /add arguments into (type, identifier, title). Telegram only."""
+    """Parse /add arguments into (type, identifier, title)."""
     if not args:
         raise ValueError(
             "Формат: /add @channel [название]\n"
             "Несколько каналов: /add telegram @a @b\n"
+            "RSS: /add rss https://site.com/feed/ [название]\n"
             "Папка: /addlist https://t.me/addlist/…"
         )
 
-    removed = {"rss", "ria", "facebook", "twitter", "fb", "x", "tw", "twitter/x"}
+    removed = {"ria", "facebook", "twitter", "fb", "x", "tw", "twitter/x"}
     aliases = {
         "tg": "telegram",
         "channel": "telegram",
@@ -467,12 +481,24 @@ def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
         "folder": "telegram",
         "list": "telegram",
     }
+    rss_aliases = {"rss", "feed", "atom", "blog"}
     raw_type = args[0].lower().strip()
     if raw_type in removed:
         raise ValueError(
-            "Сейчас поддерживаются только публичные Telegram-каналы.\n"
-            "Пример: /add @bbcnews или /add telegram @ch1 @ch2"
+            "Поддерживаются публичные Telegram-каналы и RSS-фиды.\n"
+            "Примеры: /add @bbcnews или /add rss https://ahrefs.com/blog/feed/"
         )
+
+    if raw_type in rss_aliases:
+        if len(args) < 2:
+            raise ValueError(
+                "Формат: /add rss https://site.com/feed/ [название]"
+            )
+        identifier = args[1].strip()
+        title = " ".join(args[2:]).strip() if len(args) > 2 else ""
+        if not title:
+            title = _default_title("rss", identifier)
+        return "rss", identifier, title
 
     if raw_type == "telegram" or raw_type in aliases:
         if len(args) < 2:
@@ -482,16 +508,23 @@ def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
             )
         identifier = args[1].strip()
         title = " ".join(args[2:]).strip() if len(args) > 2 else ""
-    else:
-        # Bare @channel / t.me/… without an explicit type keyword.
-        identifier = args[0].strip()
-        title = " ".join(args[1:]).strip() if len(args) > 1 else ""
+        if not title:
+            title = _default_title("telegram", identifier)
+        return "telegram", identifier, title
 
+    identifier = args[0].strip()
+    title = " ".join(args[1:]).strip() if len(args) > 1 else ""
+    if looks_like_rss_url(identifier):
+        if not title:
+            title = _default_title("rss", identifier)
+        return "rss", identifier, title
     if not title:
         title = _default_title("telegram", identifier)
     return "telegram", identifier, title
 
 
 def _default_title(source_type: SourceType, identifier: str) -> str:
+    if source_type == "rss":
+        return rss_title_from_url(identifier)
     handle = identifier.lstrip("@").split("/")[-1]
     return f"@{handle}"

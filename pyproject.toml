@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "distinct-news-bot"
 version = "0.1.0"
-description = "Telegram bot that aggregates news from public Telegram channels without duplicates"
+description = "Telegram bot that aggregates SEO news from public Telegram channels and RSS feeds without duplicates"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
