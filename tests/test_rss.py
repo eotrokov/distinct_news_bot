@@ -44,7 +44,17 @@ def test_add_rss_source(tmp_path):
     assert source.identifier == "https://example.com/feed.xml"
 
 
-@pytest.mark.parametrize("url", ["example.com/feed", "ftp://example.com/feed", ""])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "example.com/feed",
+        "ftp://example.com/feed",
+        "",
+        "http://localhost/feed",
+        "http://127.0.0.1/feed",
+        "http://169.254.169.254/latest/meta-data",
+    ],
+)
 def test_normalize_rss_url_rejects_non_http_urls(url: str):
     with pytest.raises(ValueError):
         normalize_rss_url(url)
@@ -53,8 +63,9 @@ def test_normalize_rss_url_rejects_non_http_urls(url: str):
 @pytest.mark.asyncio
 async def test_rss_fetcher_parses_items_and_honors_since():
     class FakeHttp:
-        async def get_text(self, url: str) -> str:
+        async def get_text(self, url: str, *, follow_redirects: bool = True) -> str:
             assert url == "https://example.com/feed.xml"
+            assert not follow_redirects
             return RSS_XML
 
     source = Source(

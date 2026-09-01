@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import ipaddress
 from urllib.parse import urlparse
 
 import feedparser
@@ -21,6 +22,18 @@ def normalize_rss_url(value: str) -> str:
             "Укажите RSS-адрес с http:// или https://, например "
             "https://example.com/feed/"
         )
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Укажите RSS-адрес с именем сайта")
+    if host.lower() == "localhost" or host.lower().endswith(".local"):
+        raise ValueError("RSS-адрес должен вести на публичный сайт")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        if not address.is_global:
+            raise ValueError("RSS-адрес должен вести на публичный сайт")
     return url
 
 
@@ -58,7 +71,9 @@ class RSSFetcher(BaseFetcher):
         http = self.http or HttpService(timeout=self.timeout)
         try:
             try:
-                raw = await http.get_text(url)
+                # RSS URLs are user-controlled; do not follow a redirect to
+                # a private endpoint after validating the original URL.
+                raw = await http.get_text(url, follow_redirects=False)
             except httpx.HTTPError as exc:
                 raise FetchError(f"Не удалось загрузить RSS: {url}") from exc
         finally:

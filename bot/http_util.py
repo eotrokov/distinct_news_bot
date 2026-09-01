@@ -40,7 +40,13 @@ class HttpService:
     def clear_cache(self) -> None:
         self._cache.clear()
 
-    async def get_text(self, url: str, *, use_cache: bool = True) -> str:
+    async def get_text(
+        self,
+        url: str,
+        *,
+        use_cache: bool = True,
+        follow_redirects: bool = True,
+    ) -> str:
         if use_cache:
             cached = self._cache.get(url)
             if cached and cached[0] > time.monotonic():
@@ -50,7 +56,9 @@ class HttpService:
         async with self._sem:
             for attempt in range(self.max_retries + 1):
                 try:
-                    response = await self._client.get(url)
+                    response = await self._client.get(
+                        url, follow_redirects=follow_redirects
+                    )
                     response.raise_for_status()
                     text = response.text
                     if use_cache and self.cache_ttl_seconds > 0:
