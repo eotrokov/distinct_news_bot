@@ -7,8 +7,9 @@ Telegram-бот **SEO-дайджеста** из ваших публичных к
 `/news` собирает новости за период, раскладывает по блокам (Google / линкбилдинг / инструменты / аналитика / ИИ / контент), пишет выжимку из 2 предложений и сортирует по реакциям.
 
 Источники:
-- публичные Telegram-каналы (`@channel` / `https://t.me/channel` / папка `t.me/addlist/…`) — читаем через превью `t.me/s/...`;
-- RSS/Atom-фиды блогов (`/add rss https://ahrefs.com/blog/feed/`). Готовый набор SEO-блогов: Ahrefs, Backlinko, Moz, Search Engine Journal, Search Engine Land, Semrush, Google Search Central, Screaming Frog, Aleyda Solis, Marie Haynes.
+- **SEO-блоги (RSS)** — Ahrefs, Backlinko, Moz, SEJ, Search Engine Land, Semrush, Google Search Central, Screaming Frog, Aleyda Solis, Marie Haynes. Включены в каждую сводку у всех и **не занимают слоты плана**.
+- свои публичные Telegram-каналы (`@channel` / `https://t.me/channel` / папка `t.me/addlist/…`);
+- дополнительные RSS (`/add rss https://site.com/feed/`) — уже считаются в лимит плана.
 
 ## Команды
 
@@ -76,7 +77,7 @@ Telegram-бот **SEO-дайджеста** из ваших публичных к
 ### Подписка (Telegram Stars)
 
 - Trial 7 дней: 30 источников, расписание доступно
-- Free: 3 источника, 3 сводки/день, без расписания
+- Free: 3 своих источника, 3 сводки/день, без расписания (SEO-блоги RSS всё равно в сводке)
 - Pro / Plus: больше источников и сводок, расписание — оплата Stars (`/buy pro`, `/buy plus`)
 - `/plan` — статус; `/delete_me` — удалить данные
 - Админ: `ADMIN_USER_IDS`, команды `/grant`, `/stats`

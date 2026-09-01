@@ -12,6 +12,7 @@ from bot.ai_summarize import (
     merge_items_into_analysis,
 )
 from bot.analyzer import NewsAnalyzer, item_urls
+from bot.builtin_sources import merge_sources
 from bot.config import Settings
 from bot.db import Database
 from bot.dedupe import fingerprint_for
@@ -158,7 +159,7 @@ class DigestService:
                 "only_unseen": only_unseen,
             },
         }
-        sources = self.db.list_sources(user_id)
+        sources = merge_sources(self.db.list_sources(user_id))
         topics = self.db.list_topics(user_id)
         if not sources:
             return (

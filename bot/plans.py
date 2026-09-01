@@ -90,6 +90,7 @@ def format_plan_status(ent: UserEntitlement) -> str:
     lines = [
         f"⭐️ Подписка: {limits.title}",
         f"Источники: до {limits.max_sources}",
+        "SEO-блоги (RSS): в сводке, слоты не занимают",
         f"Сводки: до {limits.max_digests_per_day}/день (сегодня {ent.digests_today})",
         f"Окно: до {limits.max_digest_days} дн.",
         f"Расписание: {'да' if limits.allow_schedule else 'нет'}",

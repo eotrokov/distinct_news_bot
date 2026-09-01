@@ -197,14 +197,25 @@ async def send_digest_to_chat(
 
 
 def sources_text(db: Database, user_id: int) -> str:
+    from bot.channel_presets import RSS_PRESETS
+
     sources = db.list_sources(user_id)
-    if not sources:
-        return (
-            "Источников пока нет.\n"
-            "Добавьте: /add @channel, /add rss https://site.com/feed/, "
-            "кнопка «Добавить источник» или «Готовые наборы»"
+    lines: list[str] = []
+    for preset in RSS_PRESETS:
+        lines.append(
+            f"{preset.title} — всегда в сводке, слоты плана не занимают "
+            f"({preset.count}):"
         )
-    lines = ["Источники этого чата (нажмите, чтобы удалить):"]
+        for feed in preset.feeds:
+            lines.append(f"• {feed.title}")
+        lines.append("")
+    if not sources:
+        lines.append(
+            "Своих каналов/RSS пока нет. Добавьте @channel — "
+            "лимит плана считается только по ним."
+        )
+        return "\n".join(lines).rstrip()
+    lines.append("Ваши источники (нажмите, чтобы удалить):")
     for s in sources:
         if s.source_type == "rss":
             lines.append(f"#{s.id} {s.title} [RSS]\n  {s.identifier}")
@@ -266,7 +277,7 @@ async def show_channel_presets_panel(
             lines.append(f"  Папка: {preset.addlist_url}")
     for preset in RSS_PRESETS:
         lines.append(
-            f"• {preset.title} — {preset.description} "
+            f"• {preset.title} — уже в каждой сводке, слоты не занимают "
             f"({preset.count} фидов)"
         )
     text = "\n".join(lines)
@@ -455,13 +466,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if channel_preset.addlist_url:
                 report += f"\nПапка Telegram: {channel_preset.addlist_url}"
         elif rss_preset:
-            from bot.sources_ops import add_rss_feeds, format_add_report
-
-            added, skipped = add_rss_feeds(db, chat_id, list(rss_preset.feeds))
-            report = format_add_report(
-                folder_title=rss_preset.title,
-                added=added,
-                skipped=skipped,
+            report = (
+                f"{rss_preset.title} уже включены в каждую сводку "
+                f"({rss_preset.count} фидов) и не занимают слоты плана.\n"
+                "Добавлять их в «свои источники» не нужно."
             )
         else:
             await query.answer("Набор не найден.", show_alert=True)
