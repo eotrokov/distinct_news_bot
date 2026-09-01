@@ -1,18 +1,22 @@
 # Distinct News Bot
 
-Telegram-бот **SEO-дайджеста** из ваших публичных каналов: без дублей, рекламы и оффтопа.
+Telegram-бот **SEO-дайджеста** из публичных Telegram-каналов и RSS-лент:
+без дублей, рекламы и оффтопа.
 
 Работает в **личке и в групповых чатах**. У каждого чата свои каналы, темы и расписание; в группе настраивать могут администраторы.
 
 `/news` собирает новости за период, раскладывает по блокам (Google / линкбилдинг / инструменты / аналитика / ИИ / контент), пишет выжимку из 2 предложений и сортирует по реакциям.
 
-Источники: только публичные Telegram-каналы (`@channel` / `https://t.me/channel` / папка `t.me/addlist/…`). Читаем через публичный превью `t.me/s/...`.
+Источники: публичные Telegram-каналы (`@channel` / `https://t.me/channel` /
+папка `t.me/addlist/…`) и RSS/Atom-ленты. Каналы читаем через публичный
+превью `t.me/s/...`.
 
 ## Команды
 
 - `/start`, `/help` — справка
-- `/add @channel [название]` — добавить канал
+- `/add @channel [название]` — добавить Telegram-канал
 - `/add telegram @a @b` — несколько каналов сразу
+- `/add rss https://site.com/feed/ [название]` — добавить RSS- или Atom-ленту
 - `/addlist https://t.me/addlist/…` — импорт папки (затем список @каналов)
 - `/remove <id>` — удалить
 - `/sources` — список
@@ -47,6 +51,7 @@ Telegram-бот **SEO-дайджеста** из ваших публичных к
 ```text
 /add meduzalive
 /add @ch1 @ch2 https://t.me/ch3
+/add rss https://ahrefs.com/blog/feed/ "Ahrefs Blog"
 /addlist https://t.me/addlist/_0flf9ViWOo0NjNi
 /topic add ai
 /news
@@ -82,7 +87,23 @@ Telegram-бот **SEO-дайджеста** из ваших публичных к
 
 Опционально AI-выжимки (Gemini Flash / Groq): `AI_SUMMARY_ENABLED=1` + `GEMINI_API_KEY`. Без ключа — rule-based саммаризация (2 предложения).
 
-Каналы должны быть **публичными** (доступен `https://t.me/s/<channel>`).
+Telegram-каналы должны быть **публичными** (доступен
+`https://t.me/s/<channel>`). Для RSS укажите прямой URL XML-ленты.
+
+### Примеры SEO RSS-лент
+
+```text
+/add rss https://ahrefs.com/blog/feed/ "Ahrefs Blog"
+/add rss https://backlinko.com/feed "Backlinko"
+/add rss https://moz.com/posts/rss/blog "Moz Blog"
+/add rss https://www.searchenginejournal.com/feed/ "Search Engine Journal"
+/add rss https://searchengineland.com/feed "Search Engine Land"
+/add rss https://www.semrush.com/blog/feed/ "Semrush Blog"
+/add rss https://developers.google.com/search/blog/rss.xml "Google Search Central"
+/add rss https://www.screamingfrog.co.uk/feed/ "Screaming Frog Blog"
+/add rss https://www.aleydasolis.com/en/feed/ "Aleyda Solis"
+/add rss https://www.mariehaynes.com/feed/ "Marie Haynes"
+```
 
 ## Локальный запуск
 

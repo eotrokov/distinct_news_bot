@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from bot.addlist import FolderChannel, parse_telegram_handles
 from bot.db import Database
+from bot.fetchers.rss import normalize_rss_url
 from bot.fetchers.telegram import normalize_telegram_handle
 
 
@@ -53,17 +54,22 @@ def add_single_source(
     identifier: str,
     title: str,
 ):
-    if source_type != "telegram":
+    if source_type not in {"telegram", "rss"}:
         raise ValueError(
-            "Сейчас поддерживаются только публичные Telegram-каналы.\n"
-            "Пример: /add @bbcnews"
+            "Поддерживаются публичные Telegram-каналы и RSS-ленты.\n"
+            "Примеры: /add @bbcnews, /add rss https://example.com/feed/"
         )
     limits = db.get_entitlement(user_id).limits()
     if len(db.list_sources(user_id)) >= limits.max_sources:
         raise ValueError(
-            f"Лимит каналов плана ({limits.max_sources}). "
+            f"Лимит источников плана ({limits.max_sources}). "
             "Оформите Pro: /buy pro"
         )
+    if source_type == "rss":
+        identifier = normalize_rss_url(identifier)
+        if not title:
+            title = identifier
+        return db.add_source(user_id, "rss", identifier, title)
     identifier = normalize_telegram_handle(identifier)
     if not title or title.startswith("@"):
         title = f"@{identifier}"

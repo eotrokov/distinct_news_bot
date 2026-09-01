@@ -200,14 +200,15 @@ def sources_text(db: Database, user_id: int) -> str:
     sources = db.list_sources(user_id)
     if not sources:
         return (
-            "Каналов пока нет.\n"
-            "Добавьте: /add @channel, кнопка «Добавить канал» "
+            "Источников пока нет.\n"
+            "Добавьте: /add @channel или /add rss https://site.com/feed/, "
+            "кнопка «Добавить источник» "
             "или «Готовые наборы»"
         )
-    lines = ["Каналы этого чата (нажмите, чтобы удалить):"]
+    lines = ["Источники этого чата (нажмите, чтобы удалить):"]
     for s in sources:
         lines.append(f"#{s.id} {s.title}\n  {s.identifier}")
-        if s.source_type != "telegram":
+        if s.source_type not in {"telegram", "rss"}:
             lines[-1] += f"\n  ⚠ устаревший тип [{s.source_type}] — удалите"
     return "\n".join(lines)
 
@@ -564,7 +565,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             else (
                 "В группе удобнее командой:\n"
                 "/add @channel\n"
-                "Несколько: /add @ch1 @ch2\n\n/cancel — отмена."
+                "Несколько: /add @ch1 @ch2\n"
+                "RSS: /add rss https://site.com/feed/\n\n/cancel — отмена."
             )
         )
         await query.edit_message_text(prompt, reply_markup=back_home_keyboard())

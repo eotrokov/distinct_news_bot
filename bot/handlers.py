@@ -51,15 +51,16 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """\
-SEO-дайджест из Telegram-каналов: без дублей, рекламы и оффтопа.
+SEO-дайджест из Telegram-каналов и RSS-лент: без дублей, рекламы и оффтопа.
 
 Работает в личке и в групповых чатах. В группе у чата свои каналы и расписание;
 настраивать могут администраторы. Оплата Stars — только в личке с ботом.
 
 Команды:
 /menu — меню
-/add @channel — добавить канал
+/add @channel — добавить Telegram-канал
 /add @a @b — несколько каналов
+/add rss https://site.com/feed/ — добавить RSS-ленту
 /addlist <ссылка> — папка t.me/addlist/…
 /remove <id> — удалить канал
 /sources — список каналов
@@ -116,7 +117,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         sources = db.list_sources(chat_id)
         await update.message.reply_text(group_welcome_text(title))
         await update.message.reply_text(
-            "Меню:" if sources else "Добавьте каналы: /add @channel",
+            "Меню:" if sources else "Добавьте источник: /add @channel или /add rss https://site.com/feed/",
             reply_markup=main_inline_keyboard(),
         )
         return
@@ -220,7 +221,7 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     await update.message.reply_text(
-        f"Добавлен канал #{source.id}: {source.title}\n"
+        f"Добавлен источник #{source.id}: {source.title}\n"
         f"`{source.identifier}`",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=kb,
