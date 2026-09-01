@@ -78,7 +78,9 @@ def test_sources_and_topics_keyboards():
     assert any(
         b.callback_data == "m:src_presets" for r in sk.inline_keyboard for b in r
     )
-    assert any(b.text == "Добавить канал" for r in sk.inline_keyboard for b in r)
+    assert any(
+        b.text == "Добавить источник" for r in sk.inline_keyboard for b in r
+    )
 
     tk = topics_keyboard([(9, "ai")])
     assert any(b.callback_data == "m:topic_del:9" for r in tk.inline_keyboard for b in r)
