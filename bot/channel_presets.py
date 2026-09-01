@@ -76,8 +76,12 @@ RSS_PRESETS: tuple[RssPreset, ...] = (
             RssFeed("https://searchengineland.com/feed", "Search Engine Land"),
             RssFeed("https://www.semrush.com/blog/feed/", "Semrush Blog"),
             RssFeed(
-                "https://developers.google.com/search/blog/rss.xml",
+                "https://feeds.feedburner.com/blogspot/amDG",
                 "Google Search Central Blog",
+            ),
+            RssFeed(
+                "https://developers.google.com/search/updates/search_docs_updates.rss",
+                "Google Search Central Docs",
             ),
             RssFeed(
                 "https://www.screamingfrog.co.uk/feed/",

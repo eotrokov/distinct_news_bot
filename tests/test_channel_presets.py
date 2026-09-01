@@ -52,7 +52,7 @@ def test_add_channel_preset_fits_trial_plan_limit(tmp_path):
 def test_seo_blogs_rss_preset():
     preset = get_rss_preset("seo-blogs")
     assert preset is not None
-    assert preset.count == 10
+    assert preset.count == 11
     assert [feed.title for feed in preset.feeds] == [
         "Ahrefs Blog",
         "Backlinko",
@@ -61,6 +61,7 @@ def test_seo_blogs_rss_preset():
         "Search Engine Land",
         "Semrush Blog",
         "Google Search Central Blog",
+        "Google Search Central Docs",
         "Screaming Frog Blog",
         "Aleyda Solis",
         "Marie Haynes",
@@ -76,7 +77,7 @@ def test_add_rss_preset_fits_trial_plan_limit(tmp_path):
     added, skipped = add_rss_feeds(db, uid, list(preset.feeds))
 
     assert skipped == []
-    assert len(added) == 10
+    assert len(added) == 11
     assert added[0] == "Ahrefs Blog"
     sources = db.list_sources(uid)
     assert all(s.source_type == "rss" for s in sources)
@@ -87,7 +88,8 @@ def test_add_rss_preset_fits_trial_plan_limit(tmp_path):
         "https://www.searchenginejournal.com/feed",
         "https://searchengineland.com/feed",
         "https://www.semrush.com/blog/feed",
-        "https://developers.google.com/search/blog/rss.xml",
+        "https://feeds.feedburner.com/blogspot/amDG",
+        "https://developers.google.com/search/updates/search_docs_updates.rss",
         "https://www.screamingfrog.co.uk/feed",
         "https://www.aleydasolis.com/en/feed",
         "https://www.mariehaynes.com/feed",
