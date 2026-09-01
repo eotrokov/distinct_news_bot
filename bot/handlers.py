@@ -51,18 +51,19 @@ from bot.topics import parse_topic_args
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = """\
-SEO-дайджест из Telegram-каналов: без дублей, рекламы и оффтопа.
+SEO-дайджест из Telegram-каналов и RSS-лент: без дублей, рекламы и оффтопа.
 
 Работает в личке и в групповых чатах. В группе у чата свои каналы и расписание;
 настраивать могут администраторы. Оплата Stars — только в личке с ботом.
 
 Команды:
 /menu — меню
-/add @channel — добавить канал
+/add @channel — добавить Telegram-канал
+/add rss https://site.com/feed/ Название — добавить RSS
 /add @a @b — несколько каналов
 /addlist <ссылка> — папка t.me/addlist/…
-/remove <id> — удалить канал
-/sources — список каналов
+/remove <id> — удалить источник
+/sources — список источников
 /topic add <тема> — тема-фильтр
 /topics — список тем
 /news — дайджест
@@ -116,7 +117,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         sources = db.list_sources(chat_id)
         await update.message.reply_text(group_welcome_text(title))
         await update.message.reply_text(
-            "Меню:" if sources else "Добавьте каналы: /add @channel",
+            "Меню:" if sources else "Добавьте источник: /add @channel или /add rss https://site.com/feed/",
             reply_markup=main_inline_keyboard(),
         )
         return
@@ -182,6 +183,8 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "addlist",
             "folder",
             "list",
+            "rss",
+            "feed",
         }
         if args and args[0].lower() in type_aliases:
             rest = " ".join(args[1:])
@@ -220,7 +223,8 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     await update.message.reply_text(
-        f"Добавлен канал #{source.id}: {source.title}\n"
+        f"Добавлен {'RSS-источник' if source.source_type == 'rss' else 'канал'} "
+        f"#{source.id}: {source.title}\n"
         f"`{source.identifier}`",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=kb,
@@ -517,7 +521,7 @@ async def delete_me_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     clear_awaiting(context)
     where = "этого чата" if is_group_chat(update.effective_chat) else "ваши"
     await update.message.reply_text(
-        f"Все данные {where} удалены (каналы, темы, просмотренное, подписка).\n"
+        f"Все данные {where} удалены (источники, темы, просмотренное, подписка).\n"
         "Нажмите /start, чтобы начать заново.",
         reply_markup=_reply_kb(update),
     )

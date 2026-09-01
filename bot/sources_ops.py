@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from bot.addlist import FolderChannel, parse_telegram_handles
 from bot.db import Database
+from bot.fetchers.rss import default_rss_title, normalize_rss_url
 from bot.fetchers.telegram import normalize_telegram_handle
+from bot.rss_presets import RssFeed
 
 
 def add_telegram_channels(
@@ -46,6 +48,37 @@ def add_telegram_from_text(
     return add_telegram_channels(db, user_id, handles)
 
 
+def add_rss_feeds(
+    db: Database,
+    user_id: int,
+    feeds: list[RssFeed] | list[tuple[str, str]] | list[str],
+) -> tuple[list[str], list[str]]:
+    """Add RSS sources. Returns (added_labels, skipped_labels)."""
+    added: list[str] = []
+    skipped: list[str] = []
+    limits = db.get_entitlement(user_id).limits()
+    current = len(db.list_sources(user_id))
+    for item in feeds:
+        if isinstance(item, RssFeed):
+            title, url = item.name, item.url
+        elif isinstance(item, tuple):
+            title, url = item[0], item[1]
+        else:
+            url = item
+            title = default_rss_title(url)
+        url = normalize_rss_url(url)
+        label = title or default_rss_title(url)
+        if current + len(added) >= limits.max_sources:
+            skipped.append(f"{label} (лимит плана {limits.max_sources})")
+            continue
+        try:
+            db.add_source(user_id, "rss", url, label)
+            added.append(label)
+        except ValueError:
+            skipped.append(label)
+    return added, skipped
+
+
 def add_single_source(
     db: Database,
     user_id: int,
@@ -53,17 +86,22 @@ def add_single_source(
     identifier: str,
     title: str,
 ):
-    if source_type != "telegram":
+    if source_type not in {"telegram", "rss"}:
         raise ValueError(
-            "Сейчас поддерживаются только публичные Telegram-каналы.\n"
-            "Пример: /add @bbcnews"
+            "Сейчас поддерживаются публичные Telegram-каналы и RSS-ленты.\n"
+            "Пример: /add @bbcnews или /add rss https://site.com/feed/"
         )
     limits = db.get_entitlement(user_id).limits()
     if len(db.list_sources(user_id)) >= limits.max_sources:
         raise ValueError(
-            f"Лимит каналов плана ({limits.max_sources}). "
+            f"Лимит источников плана ({limits.max_sources}). "
             "Оформите Pro: /buy pro"
         )
+    if source_type == "rss":
+        identifier = normalize_rss_url(identifier)
+        title = title or default_rss_title(identifier)
+        return db.add_source(user_id, "rss", identifier, title)
+
     identifier = normalize_telegram_handle(identifier)
     if not title or title.startswith("@"):
         title = f"@{identifier}"
@@ -83,9 +121,9 @@ def format_add_report(
     if added:
         lines.append(f"Добавлено ({len(added)}): " + ", ".join(added))
     else:
-        lines.append("Новых каналов не добавлено.")
+        lines.append("Новых источников не добавлено.")
     if skipped:
-        lines.append(f"Уже были ({len(skipped)}): " + ", ".join(skipped))
+        lines.append(f"Пропущено/уже было ({len(skipped)}): " + ", ".join(skipped))
     if skipped_private:
         lines.append(
             f"Пропущено без @username (приватные): {skipped_private}"

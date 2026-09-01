@@ -6,7 +6,7 @@ from typing import Literal
 
 
 SourceType = Literal["telegram", "rss", "ria", "facebook", "twitter"]
-# Product surface is Telegram-only; legacy types may still exist in SQLite.
+# Telegram and RSS are supported; legacy types may still exist in SQLite.
 
 
 @dataclass(frozen=True)

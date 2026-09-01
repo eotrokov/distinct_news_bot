@@ -4,6 +4,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMa
 
 from bot.channel_presets import CHANNEL_PRESETS, ChannelPreset
 from bot.models import Source
+from bot.rss_presets import SEO_RSS_FEEDS
 
 # Reply keyboard labels (must match handlers)
 BTN_NEWS = "Сводка"
@@ -27,16 +28,18 @@ REPLY_BUTTONS = {
 }
 
 TELEGRAM_SOURCE_PROMPT = (
-    "Пришлите публичный канал:\n"
+    "Пришлите публичный канал или RSS-ленту:\n"
     "• @channel или https://t.me/channel\n"
     "• несколько каналов через пробел/строки\n"
+    "• RSS: https://site.com/feed/ или /add rss https://site.com/feed/ Название\n"
     "• ссылку папки https://t.me/addlist/… — затем список @каналов из папки "
     "(автоимпорт списка каналов Telegram не отдаёт)"
 )
 
 ONBOARD_PROMPT = (
-    "Привет! Я собираю сводку из ваших Telegram-каналов без дублей.\n\n"
-    "Пришлите 1–3 публичных канала (@name), и я сразу сделаю пробную сводку."
+    "Привет! Я собираю сводку из ваших Telegram-каналов и RSS-лент без дублей.\n\n"
+    "Пришлите 1–3 публичных канала (@name) или RSS URL, "
+    "и я сразу сделаю пробную сводку."
 )
 
 
@@ -133,9 +136,7 @@ def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
         rows.append(
             [InlineKeyboardButton(label, callback_data=f"m:src_del:{source.id}")]
         )
-    rows.append(
-        [InlineKeyboardButton("Добавить канал", callback_data="m:src_add")]
-    )
+    rows.append([InlineKeyboardButton("Добавить источник", callback_data="m:src_add")])
     rows.append(
         [InlineKeyboardButton("Готовые наборы", callback_data="m:src_presets")]
     )
@@ -155,6 +156,14 @@ def channel_presets_keyboard(
         ]
         for preset in presets
     ]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                f"SEO RSS новости ({len(SEO_RSS_FEEDS)})",
+                callback_data="m:src_rss_preset:seo-news",
+            )
+        ]
+    )
     rows.append([InlineKeyboardButton("« Источники", callback_data="m:sources")])
     return InlineKeyboardMarkup(rows)
 

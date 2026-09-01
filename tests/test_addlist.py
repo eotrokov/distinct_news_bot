@@ -47,7 +47,7 @@ def test_format_add_report():
     )
     assert "Маркетинг каналы" in text
     assert "Добавлено (2)" in text
-    assert "Уже были (1)" in text
+    assert "Пропущено/уже было (1)" in text
 
 
 @pytest.mark.asyncio

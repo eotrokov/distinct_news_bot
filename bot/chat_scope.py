@@ -59,7 +59,7 @@ async def user_can_manage(
 
 def group_manage_denied_text() -> str:
     return (
-        "В группе управлять каналами, темами и расписанием могут только "
+        "В группе управлять источниками, темами и расписанием могут только "
         "администраторы чата."
     )
 
@@ -77,8 +77,8 @@ def group_welcome_text(chat_title: str | None = None) -> str:
         f"SEO-дайджест подключён к {label}.\n\n"
         "Команды:\n"
         "• /news — сводка\n"
-        "• /add @channel — добавить канал (админы)\n"
+        "• /add @channel или /add rss https://site.com/feed/ — добавить источник (админы)\n"
         "• /sources · /topics · /schedule · /menu\n\n"
-        "У каждого чата свои каналы и расписание. "
+        "У каждого чата свои источники и расписание. "
         "Авто-сводка приходит сюда же."
     )
