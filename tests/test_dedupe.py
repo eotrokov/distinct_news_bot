@@ -95,12 +95,24 @@ def test_parse_add_args_bare_handle():
     assert title == "@meduza"
 
 
+def test_parse_add_args_rss():
+    t, ident, title = parse_add_args(["rss", "https://ahrefs.com/blog/feed/", "Ahrefs", "Blog"])
+    assert t == "rss"
+    assert ident == "https://ahrefs.com/blog/feed/"
+    assert title == "Ahrefs Blog"
+
+    t2, ident2, title2 = parse_add_args(["https://moz.com/posts/rss/blog"])
+    assert t2 == "rss"
+    assert ident2 == "https://moz.com/posts/rss/blog"
+    assert title2 == "moz.com"
+
+
 def test_parse_add_args_rejects_legacy_types():
     try:
         parse_add_args(["ria", "main"])
         assert False, "expected ValueError"
     except ValueError as exc:
-        assert "Telegram" in str(exc)
+        assert "Telegram" in str(exc) or "RSS" in str(exc)
 
 
 def test_format_digest_empty():

@@ -27,16 +27,16 @@ REPLY_BUTTONS = {
 }
 
 TELEGRAM_SOURCE_PROMPT = (
-    "Пришлите публичный канал:\n"
-    "• @channel или https://t.me/channel\n"
-    "• несколько каналов через пробел/строки\n"
-    "• ссылку папки https://t.me/addlist/… — затем список @каналов из папки "
-    "(автоимпорт списка каналов Telegram не отдаёт)"
+    "Пришлите источник:\n"
+    "• Telegram: @channel или https://t.me/channel\n"
+    "• Несколько каналов через пробел/строки\n"
+    "• RSS-ленту: https://site.com/feed/ или /add rss <url>\n"
+    "• Ссылку папки https://t.me/addlist/… — затем список @каналов из папки"
 )
 
 ONBOARD_PROMPT = (
-    "Привет! Я собираю сводку из ваших Telegram-каналов без дублей.\n\n"
-    "Пришлите 1–3 публичных канала (@name), и я сразу сделаю пробную сводку."
+    "Привет! Я собираю SEO-дайджест из ваших Telegram-каналов и RSS-лент без дублей.\n\n"
+    "Пришлите 1–3 канала (@name), ссылку на RSS-ленту или выберите «Готовые наборы» в меню."
 )
 
 
@@ -134,7 +134,7 @@ def sources_keyboard(sources: list[Source]) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(label, callback_data=f"m:src_del:{source.id}")]
         )
     rows.append(
-        [InlineKeyboardButton("Добавить канал", callback_data="m:src_add")]
+        [InlineKeyboardButton("Добавить источник", callback_data="m:src_add")]
     )
     rows.append(
         [InlineKeyboardButton("Готовые наборы", callback_data="m:src_presets")]

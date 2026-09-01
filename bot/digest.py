@@ -15,14 +15,14 @@ from bot.analyzer import NewsAnalyzer, item_urls
 from bot.config import Settings
 from bot.db import Database
 from bot.dedupe import fingerprint_for
-from bot.fetchers import FetchError, TelegramChannelFetcher
+from bot.fetchers import FetchError, RssFeedFetcher, TelegramChannelFetcher
 from bot.http_util import HttpService
 from bot.models import NewsItem, Source, SourceType
 from bot.topics import item_matches_topics
 
 logger = logging.getLogger(__name__)
 
-LEGACY_SOURCE_TYPES = frozenset({"rss", "ria", "facebook", "twitter"})
+LEGACY_SOURCE_TYPES = frozenset({"ria", "facebook", "twitter"})
 
 MIN_DIGEST_DAYS = 1
 MAX_DIGEST_DAYS = 30
@@ -98,6 +98,10 @@ class DigestService:
         )
         self.fetchers = {
             "telegram": TelegramChannelFetcher(
+                timeout=settings.fetch_timeout_seconds,
+                http=self.http,
+            ),
+            "rss": RssFeedFetcher(
                 timeout=settings.fetch_timeout_seconds,
                 http=self.http,
             ),
@@ -451,30 +455,44 @@ def format_digest(
 
 
 def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
-    """Parse /add arguments into (type, identifier, title). Telegram only."""
+    """Parse /add arguments into (type, identifier, title). Supports Telegram and RSS."""
     if not args:
         raise ValueError(
-            "Формат: /add @channel [название]\n"
+            "Формат: /add @channel [название] или /add rss https://site.com/feed/ [название]\n"
             "Несколько каналов: /add telegram @a @b\n"
             "Папка: /addlist https://t.me/addlist/…"
         )
 
-    removed = {"rss", "ria", "facebook", "twitter", "fb", "x", "tw", "twitter/x"}
-    aliases = {
+    removed = {"ria", "facebook", "twitter", "fb", "x", "tw", "twitter/x"}
+    tg_aliases = {
         "tg": "telegram",
         "channel": "telegram",
         "addlist": "telegram",
         "folder": "telegram",
         "list": "telegram",
     }
+    rss_aliases = {
+        "rss": "rss",
+        "feed": "rss",
+        "atom": "rss",
+    }
     raw_type = args[0].lower().strip()
     if raw_type in removed:
         raise ValueError(
-            "Сейчас поддерживаются только публичные Telegram-каналы.\n"
-            "Пример: /add @bbcnews или /add telegram @ch1 @ch2"
+            "Сейчас поддерживаются публичные Telegram-каналы и RSS-ленты.\n"
+            "Пример: /add @bbcnews или /add rss https://site.com/feed/"
         )
 
-    if raw_type == "telegram" or raw_type in aliases:
+    if raw_type in rss_aliases:
+        if len(args) < 2:
+            raise ValueError("Формат: /add rss <url_ленты> [название]")
+        identifier = args[1].strip()
+        title = " ".join(args[2:]).strip() if len(args) > 2 else ""
+        if not title:
+            title = _default_title("rss", identifier)
+        return "rss", identifier, title
+
+    if raw_type == "telegram" or raw_type in tg_aliases:
         if len(args) < 2:
             raise ValueError(
                 "Формат: /add telegram @channel [название]\n"
@@ -482,6 +500,14 @@ def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
             )
         identifier = args[1].strip()
         title = " ".join(args[2:]).strip() if len(args) > 2 else ""
+    elif raw_type.startswith(("http://", "https://")) and (
+        "/feed" in raw_type or "/rss" in raw_type or "/blog" in raw_type or raw_type.endswith((".xml", ".rss", ".atom"))
+    ):
+        identifier = args[0].strip()
+        title = " ".join(args[1:]).strip() if len(args) > 1 else ""
+        if not title:
+            title = _default_title("rss", identifier)
+        return "rss", identifier, title
     else:
         # Bare @channel / t.me/… without an explicit type keyword.
         identifier = args[0].strip()
@@ -493,5 +519,9 @@ def parse_add_args(args: list[str]) -> tuple[SourceType, str, str]:
 
 
 def _default_title(source_type: SourceType, identifier: str) -> str:
+    if source_type == "rss":
+        from urllib.parse import urlparse
+        parsed = urlparse(identifier if identifier.startswith(("http://", "https://")) else f"https://{identifier}")
+        return parsed.netloc or identifier
     handle = identifier.lstrip("@").split("/")[-1]
     return f"@{handle}"
