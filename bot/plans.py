@@ -27,10 +27,10 @@ PLAN_CATALOG: dict[str, PlanLimits] = {
     "free": PlanLimits(
         key="free",
         title="Free",
-        max_sources=3,
-        max_digests_per_day=3,
-        allow_schedule=False,
-        max_digest_days=3,
+        max_sources=15,
+        max_digests_per_day=10,
+        allow_schedule=True,
+        max_digest_days=7,
     ),
     "pro": PlanLimits(
         key="pro",

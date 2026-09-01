@@ -38,20 +38,21 @@ def test_trial_expires_to_free():
         digest_day=None,
     )
     assert ent.effective_plan() == "free"
-    assert ent.limits().allow_schedule is False
+    assert ent.limits().max_sources == PLAN_CATALOG["free"].max_sources
+    assert ent.limits().allow_schedule is PLAN_CATALOG["free"].allow_schedule
 
 
 def test_digest_quota(tmp_path):
     db = Database(str(tmp_path / "quota.sqlite3"))
     user_id = 5
     db.set_plan(user_id, "free")
-    # free allows 3/day
-    for _ in range(3):
+    daily = PLAN_CATALOG["free"].max_digests_per_day
+    for _ in range(daily):
         ok, _ = db.consume_digest_quota(user_id)
         assert ok is True
     ok, ent = db.consume_digest_quota(user_id)
     assert ok is False
-    assert ent.limits().max_digests_per_day == 3
+    assert ent.limits().max_digests_per_day == daily
 
 
 def test_source_limit(tmp_path):
@@ -60,10 +61,10 @@ def test_source_limit(tmp_path):
     db.set_plan(user_id, "free")
     from bot.sources_ops import add_telegram_channels
 
-    added, skipped = add_telegram_channels(
-        db, user_id, ["a111", "b222", "c333", "d444"]
-    )
-    assert len(added) == 3
+    cap = PLAN_CATALOG["free"].max_sources
+    handles = [f"chan{i:04d}" for i in range(cap + 1)]
+    added, skipped = add_telegram_channels(db, user_id, handles)
+    assert len(added) == cap
     assert any("лимит" in s for s in skipped)
 
 

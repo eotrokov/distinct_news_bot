@@ -42,13 +42,15 @@ def test_free_plan_slots_ignore_builtins(tmp_path):
     db.set_plan(uid, "free")
     from bot.sources_ops import add_telegram_channels
 
-    added, skipped = add_telegram_channels(
-        db, uid, ["a111", "b222", "c333", "d444"]
-    )
-    assert len(added) == 3
+    from bot.plans import PLAN_CATALOG
+
+    cap = PLAN_CATALOG["free"].max_sources
+    handles = [f"chan{i:04d}" for i in range(cap + 1)]
+    added, skipped = add_telegram_channels(db, uid, handles)
+    assert len(added) == cap
     assert any("лимит" in s for s in skipped)
     merged = merge_sources(db.list_sources(uid))
-    assert len(merged) == 3 + len(builtin_rss_sources())
+    assert len(merged) == cap + len(builtin_rss_sources())
 
 
 def test_sources_text_lists_builtin_blogs(tmp_path):
@@ -64,5 +66,8 @@ def test_plan_status_mentions_builtin_rss(tmp_path):
     db.set_plan(1, "free")
     text = format_plan_status(db.get_entitlement(1))
     assert "⭐️ Подписка: Free" in text
-    assert "Источники: до 3" in text
+    assert "Источники: до 15" in text
+    assert "Сводки: до 10/день" in text
+    assert "Окно: до 7 дн." in text
+    assert "Расписание: да" in text
     assert "SEO-блоги (RSS): в сводке, слоты не занимают" in text
