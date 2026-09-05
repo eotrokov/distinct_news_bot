@@ -44,6 +44,17 @@ ssh_cmd "mkdir -p $(printf %q "$DEPLOY_PATH")/data; \
     echo 'Docker is not installed on the server' >&2; exit 1; \
   fi"
 
+echo "==> Freeing disk space on remote before sync"
+# Do not prune volumes — bot-data must survive deploys.
+ssh_cmd "df -h / | tail -1; \
+  docker container prune -f >/dev/null 2>&1 || true; \
+  docker image prune -af >/dev/null 2>&1 || true; \
+  docker builder prune -af >/dev/null 2>&1 || true; \
+  docker system prune -af >/dev/null 2>&1 || true; \
+  (command -v apt-get >/dev/null && apt-get clean >/dev/null 2>&1) || true; \
+  rm -rf /tmp/pip-* /var/tmp/pip-* >/dev/null 2>&1 || true; \
+  df -h / | tail -1"
+
 echo "==> Syncing project files to $REMOTE:$DEPLOY_PATH"
 RSYNC_RSH="$(rsync_ssh)"
 rsync -az --delete \
