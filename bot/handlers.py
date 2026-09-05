@@ -48,15 +48,16 @@ from bot.sources_ops import (
     add_telegram_from_text,
     format_add_report,
 )
+from bot.plans import MONETIZATION_OFF_MESSAGE, is_monetization_enabled
 from bot.topics import parse_topic_args
 
 logger = logging.getLogger(__name__)
 
-HELP_TEXT = """\
+HELP_TEXT_BASE = """\
 SEO-дайджест из Telegram-каналов и RSS-блогов: без дублей, рекламы и оффтопа.
 
 Работает в личке и в групповых чатах. В группе у чата свои источники и расписание;
-настраивать могут администраторы. Оплата Stars — только в личке с ботом.
+настраивать могут администраторы.{billing_note}
 
 Команды:
 /menu — меню
@@ -72,9 +73,7 @@ SEO-дайджест из Telegram-каналов и RSS-блогов: без д
 /news 7 — за 7 дней
 /news new — только новое
 /schedule on 9 — авто-сводка в этот чат
-/plan — статус подписки
-/buy pro — оплата Stars (личка)
-/reset — сбросить просмотренное
+{plan_cmds}/reset — сбросить просмотренное
 /delete_me — удалить данные этого чата
 /help — справка
 
@@ -83,8 +82,30 @@ SEO-дайджест из Telegram-каналов и RSS-блогов: без д
 Утро: /schedule on 9:55 — дайджест за вчера (в личке или группе).
 Добавьте бота в группу → /start → /add @channel → /news.
 Готовый набор SEO-блогов (Ahrefs, Moz, SEJ и др.) уже в каждой сводке и не занимает слоты плана.
-Свои каналы: /add @channel. Лимит Free — на ваши источники, не на эти блоги.
+Свои каналы: /add @channel.{limit_note}
 """
+
+
+def help_text() -> str:
+    if is_monetization_enabled():
+        return HELP_TEXT_BASE.format(
+            billing_note=" Оплата Stars — только в личке с ботом.",
+            plan_cmds="/plan — статус подписки\n/buy pro — оплата Stars (личка)\n",
+            limit_note=" Лимит Free — на ваши источники, не на эти блоги.",
+        )
+    return HELP_TEXT_BASE.format(
+        billing_note=f" {MONETIZATION_OFF_MESSAGE}",
+        plan_cmds="",
+        limit_note="",
+    )
+
+
+# Back-compat for imports/tests that read HELP_TEXT as a constant.
+HELP_TEXT = HELP_TEXT_BASE.format(
+    billing_note=" Оплата Stars — только в личке с ботом.",
+    plan_cmds="/plan — статус подписки\n/buy pro — оплата Stars (личка)\n",
+    limit_note=" Лимит Free — на ваши источники, не на эти блоги.",
+)
 
 
 def _reply_kb(update: Update):
@@ -150,7 +171,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text(HELP_TEXT, reply_markup=_reply_kb(update))
+        await update.message.reply_text(help_text(), reply_markup=_reply_kb(update))
 
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -512,6 +533,9 @@ async def plan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
+        return
+    if not is_monetization_enabled():
+        await update.message.reply_text(MONETIZATION_OFF_MESSAGE)
         return
     if not is_private_chat(update.effective_chat):
         await update.message.reply_text(group_buy_hint())

@@ -103,6 +103,16 @@
       text-transform: uppercase;
       letter-spacing: 0.02em;
     }
+    th a.sort-link {
+      color: inherit;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.15rem;
+      white-space: nowrap;
+    }
+    th a.sort-link:hover { text-decoration: underline; }
+    th a.sort-link.is-active { color: var(--accent); }
     tr:last-child td { border-bottom: none; }
     .badge {
       display: inline-block;

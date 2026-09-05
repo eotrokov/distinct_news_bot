@@ -128,10 +128,14 @@ def add_single_source(
         )
     limits = db.get_entitlement(user_id).limits()
     if len(db.list_sources(user_id)) >= limits.max_sources:
-        raise ValueError(
-            f"Лимит источников плана ({limits.max_sources}). "
-            "Оформите Pro: /buy pro"
-        )
+        from bot.plans import is_monetization_enabled
+
+        if is_monetization_enabled():
+            raise ValueError(
+                f"Лимит источников плана ({limits.max_sources}). "
+                "Оформите Pro: /buy pro"
+            )
+        raise ValueError(f"Лимит источников ({limits.max_sources}).")
     if source_type == "rss":
         identifier = normalize_rss_url(identifier)
         if not title or title.startswith("@"):

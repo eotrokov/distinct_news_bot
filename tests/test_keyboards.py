@@ -16,6 +16,7 @@ from bot.keyboards import (
     topics_keyboard,
 )
 from bot.models import Source
+from bot.plans import set_monetization_enabled
 from datetime import datetime, timezone
 
 
@@ -38,11 +39,35 @@ def test_main_keyboards():
     )
 
 
+def test_main_keyboards_hide_plan_when_monetization_off():
+    set_monetization_enabled(False)
+    reply = main_reply_keyboard()
+    labels = {btn.text for row in reply.keyboard for btn in row}
+    assert BTN_PLAN not in labels
+    assert BTN_SCHEDULE in labels
+    inline = main_inline_keyboard()
+    assert not any(
+        btn.callback_data == "m:plan" for row in inline.inline_keyboard for btn in row
+    )
+    assert any(
+        btn.callback_data == "m:schedule" for row in inline.inline_keyboard for btn in row
+    )
+
+
 def test_plan_keyboard():
     kb = plan_keyboard()
     data = {b.callback_data for r in kb.inline_keyboard for b in r}
     assert "m:buy:pro" in data
     assert "m:buy:plus" in data
+
+
+def test_plan_keyboard_without_buy_when_monetization_off():
+    set_monetization_enabled(False)
+    kb = plan_keyboard()
+    data = {b.callback_data for r in kb.inline_keyboard for b in r}
+    assert "m:buy:pro" not in data
+    assert "m:buy:plus" not in data
+    assert "m:home" in data
 
 
 def test_schedule_keyboard():

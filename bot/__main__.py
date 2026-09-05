@@ -10,6 +10,7 @@ from bot.db import Database
 from bot.digest import DigestService
 from bot.handlers import register_handlers
 from bot.jobs import setup_schedule_jobs
+from bot.plans import set_monetization_enabled
 
 
 def setup_logging(level: str) -> None:
@@ -49,6 +50,7 @@ async def _post_shutdown(app: Application) -> None:
 
 
 def build_app(settings: Settings) -> Application:
+    set_monetization_enabled(settings.monetization_enabled)
     db = Database(settings.db_path)
     digest = DigestService(db, settings)
     app = (
@@ -69,7 +71,10 @@ def main() -> None:
     settings = Settings.from_env()
     setup_logging(settings.log_level)
     app = build_app(settings)
-    logging.getLogger(__name__).info("Starting distinct-news-bot")
+    logging.getLogger(__name__).info(
+        "Starting distinct-news-bot (monetization=%s)",
+        "on" if settings.monetization_enabled else "off",
+    )
     app.run_polling(
         allowed_updates=[
             "message",

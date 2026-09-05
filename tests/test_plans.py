@@ -3,7 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from bot.db import Database
-from bot.plans import PLAN_CATALOG, TRIAL_DAYS, UserEntitlement, format_plan_status
+from bot.plans import (
+    PLAN_CATALOG,
+    TRIAL_DAYS,
+    UserEntitlement,
+    format_plan_status,
+    is_monetization_enabled,
+    set_monetization_enabled,
+)
 
 
 def test_trial_entitlement_defaults(tmp_path):
@@ -76,3 +83,29 @@ def test_delete_user_data(tmp_path):
     db.delete_user_data(user_id)
     assert db.list_sources(user_id) == []
     assert db.list_topics(user_id) == []
+
+
+def test_monetization_off_removes_quotas(tmp_path):
+    set_monetization_enabled(False)
+    assert is_monetization_enabled() is False
+    db = Database(str(tmp_path / "open.sqlite3"))
+    user_id = 9
+    db.set_plan(user_id, "free")
+    ent = db.get_entitlement(user_id)
+    assert ent.effective_plan() == "open"
+    assert ent.limits().max_sources >= 1000
+    assert ent.limits().max_digests_per_day >= 1000
+    status = format_plan_status(ent)
+    assert "временно отключены" in status
+    assert "/buy pro" not in status
+
+    from bot.sources_ops import add_telegram_channels
+
+    handles = [f"open{i:04d}" for i in range(40)]
+    added, skipped = add_telegram_channels(db, user_id, handles)
+    assert len(added) == 40
+    assert skipped == []
+    for _ in range(30):
+        ok, _ = db.consume_digest_quota(user_id)
+        assert ok is True
+
