@@ -3,6 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+# Temporary kill-switch for paid plans / quotas. Re-enable via MONETIZATION_ENABLED=1.
+_MONETIZATION_ENABLED = False
+
+
+def set_monetization_enabled(enabled: bool) -> None:
+    global _MONETIZATION_ENABLED
+    _MONETIZATION_ENABLED = enabled
+
+
+def is_monetization_enabled() -> bool:
+    return _MONETIZATION_ENABLED
+
 
 @dataclass(frozen=True)
 class PlanLimits:
@@ -52,8 +64,22 @@ PLAN_CATALOG: dict[str, PlanLimits] = {
     ),
 }
 
+# Used while monetization is off: no practical quotas.
+OPEN_LIMITS = PlanLimits(
+    key="open",
+    title="Open",
+    max_sources=10_000,
+    max_digests_per_day=10_000,
+    allow_schedule=True,
+    max_digest_days=30,
+)
+
 TRIAL_DAYS = 7
 SUBSCRIPTION_PERIOD_SECONDS = 30 * 24 * 60 * 60  # Telegram Stars monthly
+MONETIZATION_OFF_MESSAGE = (
+    "Оплата и лимиты подписки временно отключены. "
+    "Все функции доступны без оплаты."
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +92,8 @@ class UserEntitlement:
     digest_day: str | None
 
     def effective_plan(self, now: datetime | None = None) -> str:
+        if not is_monetization_enabled():
+            return "open"
         now = now or datetime.now(timezone.utc)
         plan = self.plan if self.plan in PLAN_CATALOG else "free"
         if plan == "trial":
@@ -80,11 +108,23 @@ class UserEntitlement:
         return "free"
 
     def limits(self, now: datetime | None = None) -> PlanLimits:
+        if not is_monetization_enabled():
+            return OPEN_LIMITS
         return PLAN_CATALOG[self.effective_plan(now)]
 
 
 def format_plan_status(ent: UserEntitlement) -> str:
     now = datetime.now(timezone.utc)
+    if not is_monetization_enabled():
+        return (
+            f"⭐️ Подписка: {OPEN_LIMITS.title}\n"
+            f"{MONETIZATION_OFF_MESSAGE}\n"
+            f"Источники: без лимита\n"
+            "SEO-блоги (RSS): в сводке\n"
+            f"Сводки: без дневного лимита (сегодня {ent.digests_today})\n"
+            f"Окно: до {OPEN_LIMITS.max_digest_days} дн.\n"
+            "Расписание: да"
+        )
     key = ent.effective_plan(now)
     limits = PLAN_CATALOG[key]
     lines = [

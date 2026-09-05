@@ -43,33 +43,47 @@ ONBOARD_PROMPT = (
 
 
 def main_reply_keyboard() -> ReplyKeyboardMarkup:
+    from bot.plans import is_monetization_enabled
+
+    rows = [
+        [BTN_NEWS, BTN_NEW_ONLY],
+        [BTN_SOURCES, BTN_TOPICS],
+    ]
+    if is_monetization_enabled():
+        rows.append([BTN_SCHEDULE, BTN_PLAN])
+    else:
+        rows.append([BTN_SCHEDULE])
+    rows.append([BTN_MENU, BTN_HELP])
     return ReplyKeyboardMarkup(
-        [
-            [BTN_NEWS, BTN_NEW_ONLY],
-            [BTN_SOURCES, BTN_TOPICS],
-            [BTN_SCHEDULE, BTN_PLAN],
-            [BTN_MENU, BTN_HELP],
-        ],
+        rows,
         resize_keyboard=True,
         is_persistent=True,
     )
 
 
 def main_inline_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
+    from bot.plans import is_monetization_enabled
+
+    rows = [
+        [InlineKeyboardButton("Сводка новостей", callback_data="m:news")],
         [
-            [InlineKeyboardButton("Сводка новостей", callback_data="m:news")],
-            [
-                InlineKeyboardButton("Источники", callback_data="m:sources"),
-                InlineKeyboardButton("Темы", callback_data="m:topics"),
-            ],
+            InlineKeyboardButton("Источники", callback_data="m:sources"),
+            InlineKeyboardButton("Темы", callback_data="m:topics"),
+        ],
+    ]
+    if is_monetization_enabled():
+        rows.append(
             [
                 InlineKeyboardButton("Расписание", callback_data="m:schedule"),
                 InlineKeyboardButton("Подписка", callback_data="m:plan"),
-            ],
-            [InlineKeyboardButton("Помощь", callback_data="m:help")],
-        ]
-    )
+            ]
+        )
+    else:
+        rows.append(
+            [InlineKeyboardButton("Расписание", callback_data="m:schedule")]
+        )
+    rows.append([InlineKeyboardButton("Помощь", callback_data="m:help")])
+    return InlineKeyboardMarkup(rows)
 
 
 def digest_mode_keyboard() -> InlineKeyboardMarkup:
@@ -119,6 +133,10 @@ def schedule_keyboard(*, enabled: bool) -> InlineKeyboardMarkup:
 
 
 def plan_keyboard() -> InlineKeyboardMarkup:
+    from bot.plans import is_monetization_enabled
+
+    if not is_monetization_enabled():
+        return back_home_keyboard()
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("Купить Pro ⭐", callback_data="m:buy:pro")],

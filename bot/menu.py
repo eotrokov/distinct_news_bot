@@ -38,7 +38,7 @@ from bot.chat_scope import (
     user_can_manage,
     workspace_id,
 )
-from bot.plans import format_plan_status
+from bot.plans import format_plan_status, is_monetization_enabled, MONETIZATION_OFF_MESSAGE
 from bot.schedule import format_schedule_status
 from bot.topics import parse_topic_args
 
@@ -210,10 +210,13 @@ def sources_text(db: Database, user_id: int) -> str:
             lines.append(f"• {feed.title}")
         lines.append("")
     if not sources:
-        lines.append(
-            "Своих каналов/RSS пока нет. Добавьте @channel — "
-            "лимит плана считается только по ним."
-        )
+        if is_monetization_enabled():
+            lines.append(
+                "Своих каналов/RSS пока нет. Добавьте @channel — "
+                "лимит плана считается только по ним."
+            )
+        else:
+            lines.append("Своих каналов/RSS пока нет. Добавьте @channel.")
         return "\n".join(lines).rstrip()
     lines.append("Ваши источники (нажмите, чтобы удалить):")
     for s in sources:
@@ -302,11 +305,13 @@ async def show_plan_panel(
     db.ensure_user(chat_id)
     ent = db.get_entitlement(chat_id)
     text = format_plan_status(ent)
-    if not is_private_chat(update.effective_chat):
+    if is_monetization_enabled() and not is_private_chat(update.effective_chat):
         text += "\n\n" + group_buy_hint()
         markup = back_home_keyboard()
-    else:
+    elif is_monetization_enabled():
         markup = plan_keyboard()
+    else:
+        markup = back_home_keyboard()
     if edit and update.callback_query and update.callback_query.message:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
     elif update.effective_message:
@@ -489,6 +494,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await show_plan_panel(update, context, edit=True)
         return
     if data.startswith("m:buy:"):
+        if not is_monetization_enabled():
+            await query.answer(MONETIZATION_OFF_MESSAGE, show_alert=True)
+            return
         if not is_private_chat(update.effective_chat):
             await query.answer(group_buy_hint(), show_alert=True)
             return
@@ -567,9 +575,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if data == "m:help":
         clear_awaiting(context)
-        from bot.handlers import HELP_TEXT
+        from bot.handlers import help_text
 
-        await query.edit_message_text(HELP_TEXT, reply_markup=back_home_keyboard())
+        await query.edit_message_text(help_text(), reply_markup=back_home_keyboard())
         return
     if data == "m:reset":
         if not await _require_manage(update, context, alert=True):
@@ -680,9 +688,9 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif text == BTN_MENU:
         await show_main_menu(update, context)
     elif text == BTN_HELP:
-        from bot.handlers import HELP_TEXT
+        from bot.handlers import help_text
 
-        await update.message.reply_text(HELP_TEXT, reply_markup=_reply_kb(update))
+        await update.message.reply_text(help_text(), reply_markup=_reply_kb(update))
 
 
 async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

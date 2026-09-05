@@ -650,11 +650,14 @@ class Database:
         *,
         limit: int = 200,
         offset: int = 0,
+        sort_by: str = "last_digest_at",
+        sort_dir: str = "desc",
     ) -> list[UserStatsRow]:
         cutoff_7d = (_utc_now() - timedelta(days=7)).isoformat()
+        order_sql = self._users_order_by(sort_by, sort_dir)
         with self.connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     u.user_id,
                     u.plan,
@@ -678,15 +681,36 @@ class Database:
                         WHERE de.user_id = u.user_id AND de.delivered_at >= ?
                     ) AS digests_7d
                 FROM users u
-                ORDER BY
-                    CASE WHEN u.last_digest_at IS NULL THEN 1 ELSE 0 END,
-                    u.last_digest_at DESC,
-                    u.created_at DESC
+                ORDER BY {order_sql}
                 LIMIT ? OFFSET ?
                 """,
                 (cutoff_7d, limit, offset),
             ).fetchall()
         return [self._row_to_user_stats(row) for row in rows]
+
+    @staticmethod
+    def _users_order_by(sort_by: str, sort_dir: str) -> str:
+        direction = "DESC" if str(sort_dir).lower() != "asc" else "ASC"
+        # Whitelist only — never interpolate untrusted identifiers.
+        columns = {
+            "user_id": f"u.user_id {direction}",
+            "plan": f"u.plan {direction}, u.user_id ASC",
+            "sources_count": f"sources_count {direction}, u.user_id ASC",
+            "topics_count": f"topics_count {direction}, u.user_id ASC",
+            "seen_count": f"seen_count {direction}, u.user_id ASC",
+            "last_digest_at": (
+                "CASE WHEN u.last_digest_at IS NULL THEN 1 ELSE 0 END, "
+                f"u.last_digest_at {direction}, u.created_at DESC"
+            ),
+            "digests_7d": f"digests_7d {direction}, u.user_id ASC",
+            "created_at": f"u.created_at {direction}, u.user_id ASC",
+            "schedule": (
+                f"u.schedule_enabled {direction}, "
+                f"u.schedule_hour {direction}, "
+                f"u.schedule_minute {direction}, u.user_id ASC"
+            ),
+        }
+        return columns.get(sort_by, columns["last_digest_at"])
 
     def delete_user_data(self, user_id: int) -> None:
         with self.connect() as conn:

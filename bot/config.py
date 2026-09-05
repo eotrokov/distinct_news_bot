@@ -52,6 +52,7 @@ class Settings:
     default_digest_days: int
     summary_max_sentences: int
     admin_user_ids: frozenset[int]
+    monetization_enabled: bool
     pro_stars_price: int
     plus_stars_price: int
     ai_summary_enabled: bool
@@ -93,6 +94,9 @@ class Settings:
                 2, int(_env("SUMMARY_MAX_SENTENCES", "2") or "2")
             ),
             admin_user_ids=_parse_admin_ids(_env("ADMIN_USER_IDS")),
+            # Off by default while monetization is paused.
+            monetization_enabled=_env("MONETIZATION_ENABLED", "0")
+            not in {"0", "false", "False", "no", "off"},
             pro_stars_price=max(1, int(_env("PRO_STARS_PRICE", "350") or "350")),
             plus_stars_price=max(1, int(_env("PLUS_STARS_PRICE", "700") or "700")),
             ai_summary_enabled=_env("AI_SUMMARY_ENABLED", "0")

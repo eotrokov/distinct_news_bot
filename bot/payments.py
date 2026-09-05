@@ -26,6 +26,10 @@ async def send_plan_invoice(
     context: ContextTypes.DEFAULT_TYPE,
     plan: str,
 ) -> None:
+    from bot.plans import MONETIZATION_OFF_MESSAGE, is_monetization_enabled
+
+    if not is_monetization_enabled():
+        raise ValueError(MONETIZATION_OFF_MESSAGE)
     if plan not in {"pro", "plus"}:
         raise ValueError("Доступны планы: pro, plus")
     if not update.effective_user or not update.effective_message:
