@@ -2,6 +2,31 @@
 {% block title %}Пользователи — Distinct News{% endblock %}
 {% block content %}
 <h2 class="section-title">Пользователи ({{ users|length }})</h2>
+
+<div class="sort-bar" aria-label="Сортировка">
+  <a class="{% if sort_by == 'user_id' %}is-active{% endif %}"
+     href="{{ sort_href('user_id', sort_by, sort_dir) }}">ID{{ sort_indicator('user_id', sort_by, sort_dir) }}</a>
+  <a class="{% if sort_by == 'plan' %}is-active{% endif %}"
+     href="{{ sort_href('plan', sort_by, sort_dir) }}">План{{ sort_indicator('plan', sort_by, sort_dir) }}</a>
+  <a class="{% if sort_by == 'sources_count' %}is-active{% endif %}"
+     href="{{ sort_href('sources_count', sort_by, sort_dir) }}">Источники{{ sort_indicator('sources_count', sort_by, sort_dir) }}</a>
+  <a class="{% if sort_by == 'topics_count' %}is-active{% endif %}"
+     href="{{ sort_href('topics_count', sort_by, sort_dir) }}">Темы{{ sort_indicator('topics_count', sort_by, sort_dir) }}</a>
+  <a class="{% if sort_by == 'seen_count' %}is-active{% endif %}"
+     href="{{ sort_href('seen_count', sort_by, sort_dir) }}">Просмотрено{{ sort_indicator('seen_count', sort_by, sort_dir) }}</a>
+  <a class="{% if sort_by == 'last_digest_at' %}is-active{% endif %}"
+     href="{{ sort_href('last_digest_at', sort_by, sort_dir) }}">Последний дайджест{{ sort_indicator('last_digest_at', sort_by, sort_dir) }}</a>
+  <a class="{% if sort_by == 'digests_7d' %}is-active{% endif %}"
+     href="{{ sort_href('digests_7d', sort_by, sort_dir) }}">Дайджестов 7д{{ sort_indicator('digests_7d', sort_by, sort_dir) }}</a>
+  <a class="{% if sort_by == 'created_at' %}is-active{% endif %}"
+     href="{{ sort_href('created_at', sort_by, sort_dir) }}">Регистрация{{ sort_indicator('created_at', sort_by, sort_dir) }}</a>
+  <a class="{% if sort_by == 'schedule' %}is-active{% endif %}"
+     href="{{ sort_href('schedule', sort_by, sort_dir) }}">Расписание{{ sort_indicator('schedule', sort_by, sort_dir) }}</a>
+</div>
+
+<p class="table-hint">На телефоне пользователи показаны карточками. Сортировка — кнопками выше.</p>
+
+<div class="table-wrap">
 <table>
   <thead>
     <tr>
@@ -46,23 +71,23 @@
   <tbody>
     {% for user in users %}
     <tr>
-      <td>
+      <td data-label="ID">
         {{ user.user_id }}
         {% if user.is_group %}<span class="badge">группа</span>{% endif %}
       </td>
-      <td>
+      <td data-label="План">
         {{ user.plan }}
         {% if user.plan_expires_at %}
         <br><small>{{ user.plan_expires_at|fmt_dt }}</small>
         {% endif %}
       </td>
-      <td>{{ user.sources_count }}</td>
-      <td>{{ user.topics_count }}</td>
-      <td>{{ user.seen_count }}</td>
-      <td>{{ user.last_digest_at|fmt_dt }}</td>
-      <td>{{ user.digests_7d }}</td>
-      <td>{{ user.created_at|fmt_dt }}</td>
-      <td>
+      <td data-label="Источники">{{ user.sources_count }}</td>
+      <td data-label="Темы">{{ user.topics_count }}</td>
+      <td data-label="Просмотрено">{{ user.seen_count }}</td>
+      <td data-label="Последний дайджест">{{ user.last_digest_at|fmt_dt }}</td>
+      <td data-label="Дайджестов 7д">{{ user.digests_7d }}</td>
+      <td data-label="Регистрация">{{ user.created_at|fmt_dt }}</td>
+      <td data-label="Расписание">
         {% if user.schedule_enabled %}
         {{ "%02d"|format(user.schedule_hour) }}:{{ "%02d"|format(user.schedule_minute) }}
         {% else %}
@@ -72,9 +97,10 @@
     </tr>
     {% else %}
     <tr>
-      <td colspan="9">Пока нет пользователей</td>
+      <td colspan="9" data-label="">Пока нет пользователей</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% endblock %}

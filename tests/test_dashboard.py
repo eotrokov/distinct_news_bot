@@ -49,6 +49,14 @@ def test_dashboard_shows_stats(tmp_path):
     assert "@news" not in users.text
     assert 'href="/users?sort=sources_count&amp;dir=desc"' in users.text
     assert 'href="/users?sort=user_id&amp;dir=asc"' in users.text
+    assert 'name="viewport"' in users.text
+    assert 'class="table-wrap"' in users.text
+    assert 'data-label="Источники"' in users.text
+    assert 'class="sort-bar"' in users.text
+
+    index = client.get("/")
+    assert 'name="viewport"' in index.text
+    assert 'minmax(200px, 1fr)' in index.text or "repeat(2, minmax(0, 1fr))" in index.text
 
 
 def test_dashboard_users_sort(tmp_path):
