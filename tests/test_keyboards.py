@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from bot.keyboards import (
+    BTN_LUCKY,
     BTN_NEW_ONLY,
     BTN_NEWS,
     BTN_PLAN,
@@ -8,6 +9,7 @@ from bot.keyboards import (
     channel_presets_keyboard,
     digest_mode_keyboard,
     digest_page_keyboard,
+    lucky_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
     plan_keyboard,
@@ -25,11 +27,13 @@ def test_main_keyboards():
     labels = {btn.text for row in reply.keyboard for btn in row}
     assert BTN_NEWS in labels
     assert BTN_NEW_ONLY in labels
+    assert BTN_LUCKY in labels
     assert BTN_SCHEDULE in labels
     assert BTN_PLAN in labels
     assert "Сброс курсора" not in labels
     inline = main_inline_keyboard()
     assert any(btn.callback_data == "m:news" for row in inline.inline_keyboard for btn in row)
+    assert any(btn.callback_data == "m:lucky" for row in inline.inline_keyboard for btn in row)
     assert any(
         btn.callback_data == "m:schedule" for row in inline.inline_keyboard for btn in row
     )
@@ -86,6 +90,15 @@ def test_digest_mode_keyboard():
     data = {b.callback_data for r in kb.inline_keyboard for b in r}
     assert "m:news:top" in data
     assert "m:news:new" in data
+    assert "m:lucky" in data
+
+
+def test_lucky_keyboard():
+    kb = lucky_keyboard()
+    data = {b.callback_data for r in kb.inline_keyboard for b in r}
+    assert "m:lucky" in data
+    assert "m:news:top" in data
+    assert "m:home" in data
 
 
 def test_sources_and_topics_keyboards():
