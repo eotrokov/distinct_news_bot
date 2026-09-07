@@ -10,6 +10,7 @@ from bot.channel_presets import CHANNEL_PRESETS, RSS_PRESETS, get_channel_preset
 from bot.db import Database
 from bot.digest import DigestService, parse_add_args
 from bot.keyboards import (
+    BTN_FLASH,
     BTN_HELP,
     BTN_MENU,
     BTN_NEW_ONLY,
@@ -24,6 +25,7 @@ from bot.keyboards import (
     channel_presets_keyboard,
     digest_mode_keyboard,
     digest_page_keyboard,
+    flash_digest_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
     plan_keyboard,
@@ -140,6 +142,7 @@ async def send_digest_to_chat(
     days: int | None = None,
     *,
     only_unseen: bool = False,
+    flash: bool = False,
     trigger: str = "manual",
 ) -> None:
     if not update.effective_user or not update.effective_message:
@@ -163,11 +166,12 @@ async def send_digest_to_chat(
             f"{buy_hint}\nСтатус: /plan"
         )
         return
-    status_text = (
-        "Собираю только новое…"
-        if only_unseen
-        else "Собираю сводку по реакциям…"
-    )
+    if flash:
+        status_text = "Собираю экспресс-топ по реакциям…"
+    elif only_unseen:
+        status_text = "Собираю только новое…"
+    else:
+        status_text = "Собираю сводку по реакциям…"
     status = await update.effective_message.reply_text(status_text)
     try:
         items, errors, topics, days_used, analysis = await digest.collect_for_user(
@@ -179,15 +183,16 @@ async def send_digest_to_chat(
         return
 
     pages = digest.format_digest(
-        analysis, days_used, errors=errors, topics=topics
+        analysis, days_used, errors=errors, topics=topics, flash=flash
     )
     _store_digest_pages(context, chat_id, pages)
     digest.mark_digest_delivered(chat_id, items, trigger=trigger)
-    markup = (
-        digest_page_keyboard(0, len(pages))
-        if len(pages) > 1
-        else back_home_keyboard()
-    )
+    if flash:
+        markup = flash_digest_keyboard()
+    elif len(pages) > 1:
+        markup = digest_page_keyboard(0, len(pages))
+    else:
+        markup = back_home_keyboard()
     await status.edit_text(
         pages[0],
         parse_mode=ParseMode.HTML,
@@ -441,6 +446,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         clear_awaiting(context)
         await send_digest_to_chat(update, context, only_unseen=False)
         return
+    if data == "m:news:flash":
+        clear_awaiting(context)
+        await send_digest_to_chat(update, context, only_unseen=False, flash=True)
+        return
     if data == "m:news:new":
         clear_awaiting(context)
         await send_digest_to_chat(update, context, only_unseen=True)
@@ -675,6 +684,8 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if text == BTN_NEWS:
         await send_digest_to_chat(update, context, only_unseen=False)
+    elif text == BTN_FLASH:
+        await send_digest_to_chat(update, context, only_unseen=False, flash=True)
     elif text == BTN_NEW_ONLY:
         await send_digest_to_chat(update, context, only_unseen=True)
     elif text == BTN_SOURCES:

@@ -7,6 +7,7 @@ from bot.models import Source
 
 # Reply keyboard labels (must match handlers)
 BTN_NEWS = "Сводка"
+BTN_FLASH = "⚡ Экспресс"
 BTN_NEW_ONLY = "Только новое"
 BTN_SOURCES = "Источники"
 BTN_TOPICS = "Темы"
@@ -17,6 +18,7 @@ BTN_HELP = "Помощь"
 
 REPLY_BUTTONS = {
     BTN_NEWS,
+    BTN_FLASH,
     BTN_NEW_ONLY,
     BTN_SOURCES,
     BTN_TOPICS,
@@ -46,7 +48,7 @@ def main_reply_keyboard() -> ReplyKeyboardMarkup:
     from bot.plans import is_monetization_enabled
 
     rows = [
-        [BTN_NEWS, BTN_NEW_ONLY],
+        [BTN_NEWS, BTN_FLASH, BTN_NEW_ONLY],
         [BTN_SOURCES, BTN_TOPICS],
     ]
     if is_monetization_enabled():
@@ -91,12 +93,31 @@ def digest_mode_keyboard() -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
+                    "⚡ Экспресс (топ-5)", callback_data="m:news:flash"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     "🔥 Главное за период", callback_data="m:news:top"
                 )
             ],
             [
                 InlineKeyboardButton(
                     "🆕 Только новое", callback_data="m:news:new"
+                )
+            ],
+            [InlineKeyboardButton("« Меню", callback_data="m:home")],
+        ]
+    )
+
+
+def flash_digest_keyboard() -> InlineKeyboardMarkup:
+    """After an express digest: jump to full digest or home."""
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🔥 Полная сводка", callback_data="m:news:top"
                 )
             ],
             [InlineKeyboardButton("« Меню", callback_data="m:home")],

@@ -24,7 +24,7 @@ from bot.chat_scope import (
     workspace_id,
 )
 from bot.db import Database
-from bot.digest import parse_add_args, parse_days_arg
+from bot.digest import parse_add_args, parse_days_arg, pop_flash_flag
 from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
 from bot.menu import (
     cancel_awaiting,
@@ -71,6 +71,7 @@ SEO-дайджест из Telegram-каналов и RSS-блогов: без д
 /topics — список тем
 /news — дайджест
 /news 7 — за 7 дней
+/news flash — экспресс топ-5 по реакциям
 /news new — только новое
 /schedule on 9 — авто-сводка в этот чат
 {plan_cmds}/reset — сбросить просмотренное
@@ -81,6 +82,7 @@ SEO-дайджест из Telegram-каналов и RSS-блогов: без д
 
 Утро: /schedule on 9:55 — дайджест за вчера (в личке или группе).
 Добавьте бота в группу → /start → /add @channel → /news.
+Экспресс: /news flash или кнопка «⚡ Экспресс» — топ-5 и пульс категорий за 10 секунд.
 Готовый набор SEO-блогов (Ahrefs, Moz, SEJ и др.) уже в каждой сводке и не занимает слоты плана.
 Свои каналы: /add @channel.{limit_note}
 """
@@ -636,17 +638,25 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     args = list(context.args or [])
     only_unseen = False
+    flash = False
     days: int | None = None
     if args and args[0].lower() in {"new", "unseen", "новое", "novoe"}:
         only_unseen = True
         args = args[1:]
+    else:
+        args, flash = pop_flash_flag(args)
     try:
         days = parse_days_arg(args)
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
     await send_digest_to_chat(
-        update, context, days=days, only_unseen=only_unseen, trigger="command"
+        update,
+        context,
+        days=days,
+        only_unseen=only_unseen,
+        flash=flash,
+        trigger="command",
     )
 
 

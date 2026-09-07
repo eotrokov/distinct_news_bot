@@ -33,6 +33,10 @@ LEGACY_SOURCE_TYPES = frozenset({"ria", "facebook", "twitter"})
 
 MIN_DIGEST_DAYS = 1
 MAX_DIGEST_DAYS = 30
+FLASH_DIGEST_LIMIT = 5
+FLASH_MODE_ALIASES = frozenset(
+    {"flash", "express", "экспресс", "fast", "top5", "пульс"}
+)
 
 
 def clamp_digest_days(days: int | None, default: int) -> int:
@@ -48,8 +52,8 @@ def parse_days_arg(args: list[str] | None) -> int | None:
     raw = args[0].strip().lower().rstrip("dд")
     if not raw.isdigit():
         raise ValueError(
-            "Формат: /news [дни] или /news new [дни]\n"
-            "Примеры: /news 7, /news new"
+            "Формат: /news [дни], /news new [дни] или /news flash [дни]\n"
+            "Примеры: /news 7, /news new, /news flash"
         )
     days = int(raw)
     if days < MIN_DIGEST_DAYS or days > MAX_DIGEST_DAYS:
@@ -57,6 +61,16 @@ def parse_days_arg(args: list[str] | None) -> int | None:
             f"Число дней должно быть от {MIN_DIGEST_DAYS} до {MAX_DIGEST_DAYS}"
         )
     return days
+
+
+def pop_flash_flag(args: list[str]) -> tuple[list[str], bool]:
+    """Pull flash/express mode token from `/news` args if present."""
+    if not args:
+        return args, False
+    token = args[0].strip().lower()
+    if token in FLASH_MODE_ALIASES:
+        return args[1:], True
+    return args, False
 
 
 def _days_word(days: int) -> str:
@@ -69,6 +83,47 @@ def _days_word(days: int) -> str:
     if 2 <= n1 <= 4:
         return "дня"
     return "дней"
+
+
+def _short_category_label(cat_name: str) -> str:
+    """Drop leading emoji from category titles for compact pulse lines."""
+    parts = cat_name.strip().split(maxsplit=1)
+    if len(parts) == 2 and not parts[0].isalnum():
+        return parts[1]
+    return cat_name.strip()
+
+
+def _category_heat(
+    categories: dict[str, list[NewsItem]],
+) -> list[tuple[str, int, int]]:
+    """Return (category, reactions_sum, item_count) sorted by heat."""
+    scored: list[tuple[str, int, int]] = []
+    for cat_name, cat_items in categories.items():
+        if not cat_items:
+            continue
+        reactions = sum(int(item.reactions or 0) for item in cat_items)
+        scored.append((cat_name, reactions, len(cat_items)))
+    scored.sort(key=lambda row: (row[1], row[2]), reverse=True)
+    return scored
+
+
+def digest_pulse_line(categories: dict[str, list[NewsItem]]) -> str:
+    """One-line 'what's hot' blurb from category reaction heat."""
+    heat = _category_heat(categories)
+    if not heat:
+        return ""
+    hot = [_short_category_label(name) for name, _, _ in heat[:2]]
+    quiet = [
+        _short_category_label(name)
+        for name, reactions, _ in heat[2:]
+        if reactions == 0
+    ][:1]
+    parts = [f"🔥 {', '.join(hot)}"]
+    if quiet:
+        parts.append(f"💤 {quiet[0]}")
+    elif len(heat) >= 3:
+        parts.append(f"· {_short_category_label(heat[2][0])}")
+    return "Пульс: " + " ".join(parts)
 
 
 def _format_item_links(item: NewsItem) -> str:
@@ -84,13 +139,76 @@ def _format_item_links(item: NewsItem) -> str:
     return ", ".join(parts)
 
 
-def _format_digest_item(item: NewsItem) -> str:
+def _format_engagement(item: NewsItem) -> str:
+    reactions = int(item.reactions or 0)
+    views = int(item.views or 0)
+    bits: list[str] = []
+    if reactions > 0:
+        bits.append(f"🔥 {reactions}")
+    if views > 0:
+        bits.append(f"👁 {views}")
+    return " · ".join(bits)
+
+
+def _format_digest_item(item: NewsItem, *, show_engagement: bool = False) -> str:
     """SEO digest item: 2-sentence summary + source link (no numbering)."""
     essence = escape((item.summary or item.title or "").strip() or "Без заголовка")
     link = _format_item_links(item).strip()
-    if link:
-        return f"{essence}\n{link}"
+    engagement = _format_engagement(item) if show_engagement else ""
+    meta_parts = [p for p in (engagement, link) if p]
+    if meta_parts:
+        return f"{essence}\n{' · '.join(meta_parts)}"
     return essence
+
+
+def _empty_digest_pages(
+    *,
+    days_used: int,
+    topics: list[str],
+    errors: list[str],
+    only_unseen: bool,
+    flash: bool,
+) -> list[str]:
+    if flash:
+        text = (
+            f"⚡ Экспресс: за последние {days_used} {_days_word(days_used)} "
+            "горячих постов нет."
+        )
+    elif only_unseen:
+        text = (
+            f"За последние {days_used} {_days_word(days_used)} "
+            "нового нет — всё уже было в прошлых сводках.\n"
+            "Нажмите «Сводка» для топа за период или /reset, "
+            "чтобы снова показывать просмотренное."
+        )
+    else:
+        text = f"За последние {days_used} {_days_word(days_used)} новых постов нет."
+    if topics:
+        text = (
+            f"За последние {days_used} {_days_word(days_used)} нет постов "
+            f"по темам ({', '.join(topics)})."
+        )
+    if errors:
+        text += "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
+    return [text]
+
+
+def _flatten_ranked(
+    categories: dict[str, list[NewsItem]],
+) -> list[tuple[str, NewsItem]]:
+    flat: list[tuple[str, NewsItem]] = []
+    for cat_name, cat_items in categories.items():
+        for item in cat_items:
+            flat.append((cat_name, item))
+    flat.sort(
+        key=lambda row: (
+            int(row[1].reactions or 0),
+            int(row[1].views or 0),
+            row[1].published_at.timestamp() if row[1].published_at else 0.0,
+        ),
+        reverse=True,
+    )
+    return flat
 
 
 class DigestService:
@@ -329,6 +447,7 @@ class DigestService:
         *,
         errors: list[str] | None = None,
         topics: list[str] | None = None,
+        flash: bool = False,
     ) -> list[str]:
         return format_digest_result(
             result,
@@ -336,6 +455,7 @@ class DigestService:
             errors=errors or [],
             topics=topics or [],
             page_size=self.settings.digest_page_size,
+            flash=flash,
         )
 
 
@@ -346,42 +466,64 @@ def format_digest_result(
     errors: list[str] | None = None,
     topics: list[str] | None = None,
     page_size: int = 10,
+    flash: bool = False,
+    flash_limit: int = FLASH_DIGEST_LIMIT,
 ) -> list[str]:
-    """Build digest pages: at most ``page_size`` news items per page."""
+    """Build digest pages: at most ``page_size`` news items per page.
+
+    When ``flash`` is True, return a single compact page with the global
+    top-N hottest items (by reactions) and a category pulse line.
+    """
     errors = errors or []
     topics = topics or []
     days_used = int(period) if period else 3
     stats = result.get("stats") or {}
     categories = result.get("categories") or {}
+    only_unseen = bool(stats.get("only_unseen"))
 
-    flat: list[tuple[str, NewsItem]] = []
-    for cat_name, cat_items in categories.items():
-        for item in cat_items:
-            flat.append((cat_name, item))
+    flat = _flatten_ranked(categories) if flash else [
+        (cat_name, item)
+        for cat_name, cat_items in categories.items()
+        for item in cat_items
+    ]
 
     if not flat:
-        only_unseen = bool(stats.get("only_unseen"))
-        if only_unseen:
-            text = (
-                f"За последние {days_used} {_days_word(days_used)} "
-                "нового нет — всё уже было в прошлых сводках.\n"
-                "Нажмите «Сводка» для топа за период или /reset, "
-                "чтобы снова показывать просмотренное."
-            )
-        else:
-            text = f"За последние {days_used} {_days_word(days_used)} новых постов нет."
-        if topics:
-            text = (
-                f"За последние {days_used} {_days_word(days_used)} нет постов "
-                f"по темам ({', '.join(topics)})."
-            )
-        if errors:
-            text += "\n\nПроблемы с источниками:\n" + "\n".join(
-                f"• {e}" for e in errors
-            )
-        return [text]
+        return _empty_digest_pages(
+            days_used=days_used,
+            topics=topics,
+            errors=errors,
+            only_unseen=only_unseen,
+            flash=flash,
+        )
 
-    only_unseen = bool(stats.get("only_unseen"))
+    pulse = digest_pulse_line(categories)
+    if flash:
+        limit = max(1, int(flash_limit))
+        top = flat[:limit]
+        header = (
+            f"⚡ Экспресс: топ-{len(top)} за {days_used} {_days_word(days_used)}"
+        )
+        if topics:
+            header += f"\nТемы: {', '.join(topics)}"
+        parts: list[str] = [header]
+        if pulse:
+            parts.append(f"\n{escape(pulse)}")
+        for idx, (cat_name, item) in enumerate(top, start=1):
+            cat_label = escape(_short_category_label(cat_name))
+            parts.append(f"\n\n<b>{idx}.</b> <i>{cat_label}</i>\n")
+            parts.append(_format_digest_item(item, show_engagement=True))
+        stats_line = (
+            f"\n\n📊 Из {stats.get('final_count', len(flat))} в сводке — "
+            f"только самый горячий топ. Полная: /news"
+        )
+        parts.append(stats_line)
+        if errors:
+            parts.append(
+                "\n\nПроблемы с источниками:\n"
+                + "\n".join(f"• {e}" for e in errors)
+            )
+        return ["".join(parts).rstrip()]
+
     if only_unseen:
         header = (
             f"🆕 SEO-дайджест: только новое за {days_used} {_days_word(days_used)}"
@@ -392,6 +534,8 @@ def format_digest_result(
         )
     if topics:
         header += f"\nТемы: {', '.join(topics)}"
+    if pulse:
+        header += f"\n{escape(pulse)}"
 
     stats_line = (
         f"\n\n📊 Обработано: {stats.get('total_processed', len(flat))}, "
@@ -413,7 +557,7 @@ def format_digest_result(
         chunk = flat[start : start + page_size]
         page_no = start // page_size + 1
         total_pages = (total_items + page_size - 1) // page_size
-        parts: list[str] = [header]
+        parts = [header]
         if total_pages > 1:
             parts.append(f"\n<i>Страница {page_no}/{total_pages}</i>")
 
@@ -443,6 +587,7 @@ def format_digest(
     days: int | None = None,
     analysis: dict[str, Any] | None = None,
     page_size: int = 10,
+    flash: bool = False,
 ) -> list[str]:
     """Compatibility wrapper used by handlers/tests."""
     analysis = analysis or {
@@ -461,6 +606,7 @@ def format_digest(
         errors=errors,
         topics=topics or [],
         page_size=page_size,
+        flash=flash,
     )
 
 

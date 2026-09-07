@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from bot.keyboards import (
+    BTN_FLASH,
     BTN_NEW_ONLY,
     BTN_NEWS,
     BTN_PLAN,
@@ -8,6 +9,7 @@ from bot.keyboards import (
     channel_presets_keyboard,
     digest_mode_keyboard,
     digest_page_keyboard,
+    flash_digest_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
     plan_keyboard,
@@ -24,6 +26,7 @@ def test_main_keyboards():
     reply = main_reply_keyboard()
     labels = {btn.text for row in reply.keyboard for btn in row}
     assert BTN_NEWS in labels
+    assert BTN_FLASH in labels
     assert BTN_NEW_ONLY in labels
     assert BTN_SCHEDULE in labels
     assert BTN_PLAN in labels
@@ -84,8 +87,16 @@ def test_schedule_keyboard():
 def test_digest_mode_keyboard():
     kb = digest_mode_keyboard()
     data = {b.callback_data for r in kb.inline_keyboard for b in r}
+    assert "m:news:flash" in data
     assert "m:news:top" in data
     assert "m:news:new" in data
+
+
+def test_flash_digest_keyboard():
+    kb = flash_digest_keyboard()
+    data = {b.callback_data for r in kb.inline_keyboard for b in r}
+    assert "m:news:top" in data
+    assert "m:home" in data
 
 
 def test_sources_and_topics_keyboards():
