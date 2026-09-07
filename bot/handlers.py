@@ -34,6 +34,7 @@ from bot.menu import (
     on_callback,
     on_reply_button,
     send_digest_to_chat,
+    send_lucky_to_chat,
     set_awaiting,
     show_main_menu,
     show_plan_panel,
@@ -72,6 +73,7 @@ SEO-дайджест из Telegram-каналов и RSS-блогов: без д
 /news — дайджест
 /news 7 — за 7 дней
 /news new — только новое
+/lucky — случайная горячая находка
 /schedule on 9 — авто-сводка в этот чат
 {plan_cmds}/reset — сбросить просмотренное
 /delete_me — удалить данные этого чата
@@ -81,6 +83,7 @@ SEO-дайджест из Telegram-каналов и RSS-блогов: без д
 
 Утро: /schedule on 9:55 — дайджест за вчера (в личке или группе).
 Добавьте бота в группу → /start → /add @channel → /news.
+Находка: /lucky или кнопка «🎲 Находка» — одна горячая новость + мини-график реакций.
 Готовый набор SEO-блогов (Ahrefs, Moz, SEJ и др.) уже в каждой сводке и не занимает слоты плана.
 Свои каналы: /add @channel.{limit_note}
 """
@@ -650,6 +653,18 @@ async def news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def lucky(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    days: int | None = None
+    try:
+        days = parse_days_arg(list(context.args or []))
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    await send_lucky_to_chat(update, context, days=days, trigger="command")
+
+
 async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_chat:
         return
@@ -701,6 +716,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("filters", topics_cmd))
     app.add_handler(CommandHandler("news", news))
     app.add_handler(CommandHandler("digest", news))
+    app.add_handler(CommandHandler(["lucky", "find"], lucky))
     app.add_handler(CommandHandler("schedule", schedule_cmd))
     app.add_handler(CommandHandler("plan", plan_cmd))
     app.add_handler(CommandHandler("buy", buy_cmd))

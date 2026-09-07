@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Any
@@ -33,6 +34,13 @@ LEGACY_SOURCE_TYPES = frozenset({"ria", "facebook", "twitter"})
 
 MIN_DIGEST_DAYS = 1
 MAX_DIGEST_DAYS = 30
+LUCKY_POOL_SIZE = 8
+LUCKY_OPENERS = (
+    "🎲 Вот что выпало:",
+    "🎲 Случайный хит периода:",
+    "🎲 Поймали горячее:",
+    "🎲 Находка из ленты:",
+)
 
 
 def clamp_digest_days(days: int | None, default: int) -> int:
@@ -91,6 +99,126 @@ def _format_digest_item(item: NewsItem) -> str:
     if link:
         return f"{essence}\n{link}"
     return essence
+
+
+def _short_category_label(cat_name: str) -> str:
+    parts = cat_name.strip().split(maxsplit=1)
+    if len(parts) == 2 and not parts[0].isalnum():
+        return parts[1]
+    return cat_name.strip()
+
+
+def _flatten_categories(
+    categories: dict[str, list[NewsItem]],
+) -> list[tuple[str, NewsItem]]:
+    flat: list[tuple[str, NewsItem]] = []
+    for cat_name, cat_items in categories.items():
+        for item in cat_items:
+            flat.append((cat_name, item))
+    return flat
+
+
+def _engagement_bits(item: NewsItem) -> str:
+    bits: list[str] = []
+    reactions = int(item.reactions or 0)
+    views = int(item.views or 0)
+    if reactions > 0:
+        bits.append(f"🔥 {reactions}")
+    if views > 0:
+        bits.append(f"👁 {views}")
+    return " · ".join(bits)
+
+
+def category_heat_bars(
+    categories: dict[str, list[NewsItem]],
+    *,
+    width: int = 8,
+) -> str:
+    """Compact unicode bars of reaction heat per category."""
+    rows: list[tuple[str, int]] = []
+    for cat_name, cat_items in categories.items():
+        if not cat_items:
+            continue
+        heat = sum(int(item.reactions or 0) for item in cat_items)
+        # Prefer reaction heat; fall back to item count so RSS-only still charts.
+        score = heat if heat > 0 else len(cat_items)
+        rows.append((_short_category_label(cat_name), score))
+    if not rows:
+        return ""
+    rows.sort(key=lambda row: row[1], reverse=True)
+    peak = max(score for _, score in rows) or 1
+    lines = ["Жарче всего:"]
+    for label, score in rows[:5]:
+        filled = max(1, round(width * score / peak)) if score else 0
+        bar = "█" * filled + "░" * (width - filled)
+        lines.append(f"{escape(label)[:18]:<18} {bar}")
+    return "\n".join(lines)
+
+
+def pick_lucky_item(
+    categories: dict[str, list[NewsItem]],
+    *,
+    exclude: set[str] | None = None,
+    pool_size: int = LUCKY_POOL_SIZE,
+    rng: random.Random | None = None,
+) -> tuple[str, NewsItem] | None:
+    """Weighted-random pick among the hottest items (skips recent fingerprints)."""
+    rng = rng or random.Random()
+    exclude = exclude or set()
+    flat = _flatten_categories(categories)
+    if not flat:
+        return None
+
+    fresh = [
+        (cat, item)
+        for cat, item in flat
+        if fingerprint_for(item) not in exclude
+    ]
+    pool_source = fresh or flat
+    ranked = sorted(
+        pool_source,
+        key=lambda row: (
+            int(row[1].reactions or 0),
+            int(row[1].views or 0),
+            row[1].published_at.timestamp() if row[1].published_at else 0.0,
+        ),
+        reverse=True,
+    )[: max(1, int(pool_size))]
+    weights = [
+        max(1, int(item.reactions or 0)) + max(0, int(item.views or 0) // 500)
+        for _, item in ranked
+    ]
+    return rng.choices(ranked, weights=weights, k=1)[0]
+
+
+def format_lucky_card(
+    category: str,
+    item: NewsItem,
+    *,
+    days: int,
+    categories: dict[str, list[NewsItem]] | None = None,
+    opener: str | None = None,
+) -> str:
+    """Single surprise-news card with optional heat bars."""
+    days_used = int(days) if days else 3
+    title_line = opener or LUCKY_OPENERS[0]
+    essence = escape((item.summary or item.title or "").strip() or "Без заголовка")
+    link = _format_item_links(item).strip()
+    engagement = _engagement_bits(item)
+    meta = " · ".join(p for p in (engagement, link) if p)
+
+    parts = [
+        f"{escape(title_line)}",
+        f"<i>за {days_used} {_days_word(days_used)}</i>",
+        f"\n\n<b>{escape(category)}</b>\n{essence}",
+    ]
+    if meta:
+        parts.append(f"\n{meta}")
+    if categories:
+        bars = category_heat_bars(categories)
+        if bars:
+            parts.append(f"\n\n<pre>{bars}</pre>")
+    return "".join(parts).rstrip()
 
 
 class DigestService:

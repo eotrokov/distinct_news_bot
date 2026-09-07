@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 
 from telegram import Update
 from telegram.constants import ParseMode
@@ -8,9 +9,17 @@ from telegram.ext import ContextTypes
 
 from bot.channel_presets import CHANNEL_PRESETS, RSS_PRESETS, get_channel_preset, get_rss_preset
 from bot.db import Database
-from bot.digest import DigestService, parse_add_args
+from bot.dedupe import fingerprint_for
+from bot.digest import (
+    LUCKY_OPENERS,
+    DigestService,
+    format_lucky_card,
+    parse_add_args,
+    pick_lucky_item,
+)
 from bot.keyboards import (
     BTN_HELP,
+    BTN_LUCKY,
     BTN_MENU,
     BTN_NEW_ONLY,
     BTN_NEWS,
@@ -24,6 +33,7 @@ from bot.keyboards import (
     channel_presets_keyboard,
     digest_mode_keyboard,
     digest_page_keyboard,
+    lucky_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
     plan_keyboard,
@@ -46,6 +56,8 @@ logger = logging.getLogger(__name__)
 
 AWAITING_KEY = "awaiting"
 DIGEST_SESSIONS_KEY = "digest_sessions"
+LUCKY_SESSIONS_KEY = "lucky_sessions"
+LUCKY_RECENT_LIMIT = 20
 
 
 def _reply_kb(update: Update):
@@ -106,6 +118,29 @@ def _get_digest_pages(
         return None
     pages = session.get("pages")
     return pages if isinstance(pages, list) and pages else None
+
+
+def _lucky_recent(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int
+) -> list[str]:
+    sessions = context.application.bot_data.setdefault(LUCKY_SESSIONS_KEY, {})
+    session = sessions.get(chat_id)
+    if not isinstance(session, dict):
+        return []
+    recent = session.get("recent")
+    if not isinstance(recent, list):
+        return []
+    return [fp for fp in recent if isinstance(fp, str)]
+
+
+def _remember_lucky(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int, fingerprint: str
+) -> None:
+    sessions = context.application.bot_data.setdefault(LUCKY_SESSIONS_KEY, {})
+    recent = _lucky_recent(context, chat_id)
+    recent = [fp for fp in recent if fp != fingerprint]
+    recent.append(fingerprint)
+    sessions[chat_id] = {"recent": recent[-LUCKY_RECENT_LIMIT:]}
 
 
 async def show_main_menu(
@@ -193,6 +228,94 @@ async def send_digest_to_chat(
         parse_mode=ParseMode.HTML,
         disable_web_page_preview=True,
         reply_markup=markup,
+    )
+
+
+async def send_lucky_to_chat(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    days: int | None = None,
+    *,
+    trigger: str = "manual",
+) -> None:
+    """Send one weighted-random hot item as a surprise card."""
+    if not update.effective_user or not update.effective_message:
+        return
+    chat_id = _ws(update)
+    if chat_id is None:
+        return
+    digest: DigestService = context.application.bot_data["digest"]
+    db: Database = context.application.bot_data["db"]
+    db.ensure_user(chat_id)
+    allowed, ent = db.consume_digest_quota(chat_id)
+    if not allowed:
+        limits = ent.limits()
+        buy_hint = (
+            "Оформите Pro: /buy pro"
+            if is_private_chat(update.effective_chat)
+            else group_buy_hint()
+        )
+        await update.effective_message.reply_text(
+            f"Лимит сводок на сегодня ({limits.max_digests_per_day}).\n"
+            f"{buy_hint}\nСтатус: /plan"
+        )
+        return
+
+    status = await update.effective_message.reply_text("Ищу находку…")
+    try:
+        _items, errors, topics, days_used, analysis = await digest.collect_for_user(
+            chat_id, days=days, only_unseen=False
+        )
+        categories = analysis.get("categories") or {}
+    except Exception:  # noqa: BLE001
+        logger.exception("Lucky find failed for chat %s", chat_id)
+        await status.edit_text("Не удалось найти находку. Попробуйте позже.")
+        return
+
+    # Prefer items the user hasn't seen yet, then fall back to the full pool.
+    unseen_categories: dict = {}
+    for cat_name, cat_items in categories.items():
+        fps = [fingerprint_for(item) for item in cat_items]
+        fresh = db.filter_unseen(chat_id, fps)
+        kept = [item for item in cat_items if fingerprint_for(item) in fresh]
+        if kept:
+            unseen_categories[cat_name] = kept
+    pick_from = unseen_categories or categories
+
+    picked = pick_lucky_item(
+        pick_from,
+        exclude=set(_lucky_recent(context, chat_id)),
+    )
+    if picked is None:
+        text = "Пока нечего вытягивать — добавьте источники или расширьте период."
+        if errors:
+            text += "\n\nПроблемы с источниками:\n" + "\n".join(
+                f"• {e}" for e in errors
+            )
+        await status.edit_text(text, reply_markup=back_home_keyboard())
+        return
+
+    category, item = picked
+    card = format_lucky_card(
+        category,
+        item,
+        days=days_used,
+        categories=categories,
+        opener=random.choice(LUCKY_OPENERS),
+    )
+    if topics:
+        card += f"\n\nТемы: {', '.join(topics)}"
+    if errors:
+        card += "\n\nПроблемы с источниками:\n" + "\n".join(f"• {e}" for e in errors)
+
+    fp = fingerprint_for(item)
+    _remember_lucky(context, chat_id, fp)
+    digest.mark_digest_delivered(chat_id, [item], trigger=trigger)
+    await status.edit_text(
+        card,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+        reply_markup=lucky_keyboard(),
     )
 
 
@@ -445,6 +568,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         clear_awaiting(context)
         await send_digest_to_chat(update, context, only_unseen=True)
         return
+    if data == "m:lucky":
+        clear_awaiting(context)
+        await send_lucky_to_chat(update, context)
+        return
     if data == "m:sources":
         await show_sources_panel(update, context, edit=True)
         return
@@ -677,6 +804,8 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await send_digest_to_chat(update, context, only_unseen=False)
     elif text == BTN_NEW_ONLY:
         await send_digest_to_chat(update, context, only_unseen=True)
+    elif text == BTN_LUCKY:
+        await send_lucky_to_chat(update, context)
     elif text == BTN_SOURCES:
         await show_sources_panel(update, context)
     elif text == BTN_TOPICS:

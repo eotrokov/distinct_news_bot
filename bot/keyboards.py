@@ -8,6 +8,7 @@ from bot.models import Source
 # Reply keyboard labels (must match handlers)
 BTN_NEWS = "Сводка"
 BTN_NEW_ONLY = "Только новое"
+BTN_LUCKY = "🎲 Находка"
 BTN_SOURCES = "Источники"
 BTN_TOPICS = "Темы"
 BTN_SCHEDULE = "Расписание"
@@ -18,6 +19,7 @@ BTN_HELP = "Помощь"
 REPLY_BUTTONS = {
     BTN_NEWS,
     BTN_NEW_ONLY,
+    BTN_LUCKY,
     BTN_SOURCES,
     BTN_TOPICS,
     BTN_SCHEDULE,
@@ -47,12 +49,14 @@ def main_reply_keyboard() -> ReplyKeyboardMarkup:
 
     rows = [
         [BTN_NEWS, BTN_NEW_ONLY],
-        [BTN_SOURCES, BTN_TOPICS],
+        [BTN_LUCKY, BTN_SOURCES],
+        [BTN_TOPICS],
     ]
     if is_monetization_enabled():
-        rows.append([BTN_SCHEDULE, BTN_PLAN])
+        rows[-1].append(BTN_SCHEDULE)
+        rows.append([BTN_PLAN])
     else:
-        rows.append([BTN_SCHEDULE])
+        rows[-1].append(BTN_SCHEDULE)
     rows.append([BTN_MENU, BTN_HELP])
     return ReplyKeyboardMarkup(
         rows,
@@ -66,6 +70,7 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
 
     rows = [
         [InlineKeyboardButton("Сводка новостей", callback_data="m:news")],
+        [InlineKeyboardButton("🎲 Находка", callback_data="m:lucky")],
         [
             InlineKeyboardButton("Источники", callback_data="m:sources"),
             InlineKeyboardButton("Темы", callback_data="m:topics"),
@@ -97,6 +102,29 @@ def digest_mode_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     "🆕 Только новое", callback_data="m:news:new"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🎲 Находка", callback_data="m:lucky"
+                )
+            ],
+            [InlineKeyboardButton("« Меню", callback_data="m:home")],
+        ]
+    )
+
+
+def lucky_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "🎲 Ещё находку", callback_data="m:lucky"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔥 Полная сводка", callback_data="m:news:top"
                 )
             ],
             [InlineKeyboardButton("« Меню", callback_data="m:home")],
