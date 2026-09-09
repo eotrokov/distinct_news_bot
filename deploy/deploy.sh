@@ -115,8 +115,13 @@ echo "==> Opening dashboard ports 80 and 443 on server firewall"
 ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 80 || bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 80 || true"
 ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 443 || bash $(printf %q "$DEPLOY_PATH")/deploy/open-dashboard-port.sh 443 || true"
 
+echo "==> Waiting for bot to finish Telegram bootstrap"
+ssh_cmd "sleep 15"
+
 echo "==> Recent logs"
-ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && docker compose logs --tail=40 bot"
+ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && \
+  docker inspect distinct-news-bot --format 'restarts={{.RestartCount}} status={{.State.Status}}' && \
+  docker compose logs --tail=80 bot"
 
 echo "==> Dashboard status"
 ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && docker compose ps dashboard && \

@@ -45,6 +45,7 @@ from bot.chat_scope import (
 )
 from bot.plans import format_plan_status, is_monetization_enabled, MONETIZATION_OFF_MESSAGE
 from bot.schedule import format_schedule_status
+from bot.telegram_util import safe_answer_callback
 from bot.topics import parse_topic_args
 
 logger = logging.getLogger(__name__)
@@ -91,9 +92,17 @@ async def _require_manage(
     if await user_can_manage(update, context):
         return True
     msg = group_manage_denied_text()
-    if alert and update.callback_query:
-        await update.callback_query.answer(msg, show_alert=True)
-    elif update.effective_message:
+    # Callback queries are usually already answered by on_callback — show text
+    # in the message instead of a second answer()/alert.
+    if alert and update.callback_query and update.callback_query.message:
+        try:
+            await update.callback_query.edit_message_text(
+                msg, reply_markup=back_home_keyboard()
+            )
+            return False
+        except Exception:  # noqa: BLE001
+            logger.debug("Could not edit manage-denied message", exc_info=True)
+    if update.effective_message:
         await update.effective_message.reply_text(msg)
     return False
 
@@ -293,14 +302,9 @@ async def send_digest_to_chat(
 
     lock = _digest_lock(context, chat_id)
     if lock.locked():
-        tip = (
-            "Сводка уже собирается — подождите немного."
-            if update.callback_query
-            else "Сводка уже собирается — подождите немного."
-        )
-        if update.callback_query:
-            await update.callback_query.answer(tip, show_alert=True)
-        else:
+        tip = "Сводка уже собирается — подождите немного."
+        # Callback may already be answered by on_callback — never answer twice.
+        if update.effective_message:
             await update.effective_message.reply_text(tip)
         return
 
@@ -572,30 +576,30 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     db: Database = context.application.bot_data["db"]
     chat_id = _ws(update)
     if chat_id is None:
-        await query.answer()
+        await safe_answer_callback(query)
         return
     db.ensure_user(chat_id)
-    await ensure_reply_keyboard_cleared(update, context)
 
     if data == "m:dg:noop":
-        await query.answer()
+        await safe_answer_callback(query)
         return
 
     if data.startswith("m:dg:"):
         try:
             page = int(data.split(":")[2])
         except (IndexError, ValueError):
-            await query.answer()
+            await safe_answer_callback(query)
             return
         pages = _get_digest_pages(context, chat_id)
         if not pages:
-            await query.answer(
+            await safe_answer_callback(
+                query,
                 "Страницы сводки больше нет в памяти бота — "
                 "нажмите «Сводка» ещё раз.",
                 show_alert=True,
             )
             return
-        await query.answer()
+        await safe_answer_callback(query)
         page = max(0, min(page, len(pages) - 1))
         sessions = context.application.bot_data.get(DIGEST_SESSIONS_KEY) or {}
         if chat_id in sessions:
@@ -621,7 +625,9 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             logger.exception("Failed to paginate digest for chat %s", chat_id)
         return
 
-    await query.answer()
+    # Acknowledge immediately so Telegram does not expire the query while we work.
+    await safe_answer_callback(query)
+    await ensure_reply_keyboard_cleared(update, context)
 
     if data == "m:home":
         await show_main_menu(update, context, edit=True)
@@ -685,7 +691,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 "Добавлять их в «свои источники» не нужно."
             )
         else:
-            await query.answer("Набор не найден.", show_alert=True)
+            await query.edit_message_text(
+                "Набор не найден.",
+                reply_markup=back_home_keyboard(),
+            )
             return
         await query.edit_message_text(
             f"{report}\n\n{sources_text(db, chat_id)}",
@@ -703,10 +712,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     if data.startswith("m:buy:"):
         if not is_monetization_enabled():
-            await query.answer(MONETIZATION_OFF_MESSAGE, show_alert=True)
+            await query.edit_message_text(
+                MONETIZATION_OFF_MESSAGE,
+                reply_markup=back_home_keyboard(),
+            )
             return
         if not is_private_chat(update.effective_chat):
-            await query.answer(group_buy_hint(), show_alert=True)
+            await query.edit_message_text(
+                group_buy_hint(),
+                reply_markup=back_home_keyboard(),
+            )
             return
         plan = data.split(":")[2]
         from bot.payments import send_plan_invoice
@@ -714,13 +729,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         try:
             await send_plan_invoice(update, context, plan)
         except ValueError as exc:
-            await query.answer(str(exc), show_alert=True)
+            await query.edit_message_text(
+                str(exc),
+                reply_markup=back_home_keyboard(),
+            )
         return
     if data == "m:sched:on":
         if not await _require_manage(update, context, alert=True):
             return
         if not db.get_entitlement(chat_id).limits().allow_schedule:
-            await query.answer("Расписание доступно на Pro", show_alert=True)
+            await query.edit_message_text(
+                "Расписание доступно на Pro",
+                reply_markup=back_home_keyboard(),
+            )
             return
         schedule = db.set_schedule(
             chat_id, enabled=True, hour=9, minute=55
@@ -743,7 +764,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not await _require_manage(update, context, alert=True):
             return
         if not db.get_entitlement(chat_id).limits().allow_schedule:
-            await query.answer("Расписание доступно на Pro", show_alert=True)
+            await query.edit_message_text(
+                "Расписание доступно на Pro",
+                reply_markup=back_home_keyboard(),
+            )
             return
         parts = data.split(":")
         hour = int(parts[3])
@@ -760,7 +784,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not await _require_manage(update, context, alert=True):
             return
         if not db.get_entitlement(chat_id).limits().allow_schedule:
-            await query.answer("Расписание доступно на Pro", show_alert=True)
+            await query.edit_message_text(
+                "Расписание доступно на Pro",
+                reply_markup=back_home_keyboard(),
+            )
             return
         hour = int(data.split(":")[3])
         schedule = db.set_schedule(
