@@ -1,0 +1,50 @@
+name: Fetch bot logs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+      DEPLOY_SSH_KEY_RAW: ${{ secrets.DEPLOY_SSH_KEY }}
+    steps:
+      - name: Validate secrets
+        run: |
+          test -n "${DEPLOY_HOST}" || { echo "DEPLOY_HOST required"; exit 1; }
+          test -n "${DEPLOY_USER}" || { echo "DEPLOY_USER required"; exit 1; }
+          test -n "${DEPLOY_SSH_KEY_RAW}" || { echo "DEPLOY_SSH_KEY required"; exit 1; }
+
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s' "$DEPLOY_SSH_KEY_RAW" \
+            | sed -e 's/\r$//' -e "s/^['\"]//" -e "s/['\"]$//" \
+            > ~/.ssh/deploy_key
+          if ! grep -q 'BEGIN .*PRIVATE KEY' ~/.ssh/deploy_key; then
+            printf '%s' "$DEPLOY_SSH_KEY_RAW" | sed 's/\\n/\n/g' | sed -e 's/\r$//' > ~/.ssh/deploy_key
+          fi
+          [ -n "$(tail -c1 ~/.ssh/deploy_key)" ] && printf '\n' >> ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null
+
+      - name: Dump remote bot status and logs
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          DEPLOY_PATH="${DEPLOY_PATH:-/opt/distinct-news-bot}"
+          DEPLOY_SSH_PORT="${DEPLOY_SSH_PORT:-22}"
+          SSH=(ssh -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new)
+          REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
+          "${SSH[@]}" "$REMOTE" "cd $(printf %q "$DEPLOY_PATH") && \
+            echo '=== compose ps ===' && docker compose ps && \
+            echo '=== restart count / status ===' && \
+            docker inspect distinct-news-bot --format 'restarts={{.RestartCount}} status={{.State.Status}} OOM={{.State.OOMKilled}} exit={{.State.ExitCode}} error={{.State.Error}}' && \
+            echo '=== last 200 bot log lines ===' && \
+            docker compose logs --tail=200 --timestamps bot && \
+            echo '=== error/warn subset ===' && \
+            docker compose logs --tail=500 bot 2>&1 | grep -Ei 'error|exception|traceback|conflict|failed|warning' | tail -80 || true"
