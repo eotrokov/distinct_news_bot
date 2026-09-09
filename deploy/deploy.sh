@@ -86,18 +86,25 @@ fi
 echo "==> Building and restarting container (branch hint: $DEPLOY_BRANCH)"
 # Prefer local base images so deploys survive Docker Hub / IPv6 outages.
 # Prefer IPv4 for registry auth (this VPS often cannot reach Docker Hub over IPv6).
-# Fall back to a registry pull only if the local build cannot resolve the base image.
+# If python:3.12-slim was pruned, retag the app image as a temporary base.
+# Older compose parses --pull as bool (true/false), not never/always.
 ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && \
   docker builder prune -f --filter until=72h >/dev/null 2>&1 || true; \
   if [ -f /etc/gai.conf ] || sudo test -e /etc/gai.conf; then \
     sudo grep -q 'precedence :ffff:0:0/96' /etc/gai.conf 2>/dev/null || \
       echo 'precedence :ffff:0:0/96  100' | sudo tee -a /etc/gai.conf >/dev/null || true; \
   fi; \
-  if docker compose build --pull=never; then \
+  if ! docker image inspect python:3.12-slim >/dev/null 2>&1; then \
+    if docker image inspect distinct-news-bot:latest >/dev/null 2>&1; then \
+      echo 'python:3.12-slim missing; using distinct-news-bot:latest as local build base'; \
+      docker tag distinct-news-bot:latest python:3.12-slim; \
+    fi; \
+  fi; \
+  if docker compose build --pull=false; then \
     docker compose up -d --remove-orphans; \
   else \
     echo 'Local-cache build failed; retrying with registry pull…' >&2; \
-    docker compose build --pull=always && docker compose up -d --remove-orphans; \
+    docker compose build --pull=true && docker compose up -d --remove-orphans; \
   fi && docker compose ps"
 
 echo "==> Publishing dashboard on ports 80 and 443 via nginx"
