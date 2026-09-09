@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from bot.channel_presets import CHANNEL_PRESETS, RSS_PRESETS, get_channel_preset, get_rss_preset
@@ -49,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 AWAITING_KEY = "awaiting"
 DIGEST_SESSIONS_KEY = "digest_sessions"
+DIGEST_LOCKS_KEY = "digest_locks"
 REPLY_KB_CLEARED_KEY = "reply_kb_cleared"
 REPLY_KB_WANTED_KEY = "reply_kb_wanted"
 
@@ -123,10 +126,20 @@ def get_awaiting(context: ContextTypes.DEFAULT_TYPE) -> dict | None:
 
 
 def _store_digest_pages(
-    context: ContextTypes.DEFAULT_TYPE, chat_id: int, pages: list[str]
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    pages: list[str],
+    *,
+    db: Database | None = None,
 ) -> None:
     sessions = context.application.bot_data.setdefault(DIGEST_SESSIONS_KEY, {})
     sessions[chat_id] = {"pages": pages, "page": 0}
+    store = db or context.application.bot_data.get("db")
+    if isinstance(store, Database):
+        try:
+            store.save_digest_session(chat_id, pages, page=0)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to persist digest session for chat %s", chat_id)
 
 
 def _get_digest_pages(
@@ -134,10 +147,59 @@ def _get_digest_pages(
 ) -> list[str] | None:
     sessions = context.application.bot_data.get(DIGEST_SESSIONS_KEY) or {}
     session = sessions.get(chat_id)
-    if not isinstance(session, dict):
+    if isinstance(session, dict):
+        pages = session.get("pages")
+        if isinstance(pages, list) and pages:
+            return pages
+
+    db = context.application.bot_data.get("db")
+    if isinstance(db, Database):
+        try:
+            stored = db.get_digest_session(chat_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to load digest session for chat %s", chat_id)
+            return None
+        if stored:
+            pages = stored["pages"]
+            sessions = context.application.bot_data.setdefault(DIGEST_SESSIONS_KEY, {})
+            sessions[chat_id] = {"pages": pages, "page": stored.get("page", 0)}
+            return pages
+    return None
+
+
+def _digest_lock(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int
+) -> asyncio.Lock:
+    locks = context.application.bot_data.setdefault(DIGEST_LOCKS_KEY, {})
+    lock = locks.get(chat_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks[chat_id] = lock
+    return lock
+
+
+def _parse_digest_days_callback(data: str) -> int | None:
+    """Parse ``m:news:top:7`` / ``m:news:new:1`` → days, else None (default)."""
+    parts = data.split(":")
+    if len(parts) < 4:
         return None
-    pages = session.get("pages")
-    return pages if isinstance(pages, list) and pages else None
+    raw = parts[3]
+    if not raw.isdigit():
+        return None
+    days = int(raw)
+    if days < 1:
+        return None
+    return days
+
+
+async def _safe_edit_status(status, text: str) -> None:
+    try:
+        await status.edit_text(text)
+    except BadRequest:
+        # Message not modified / already gone — ignore.
+        pass
+    except Exception:  # noqa: BLE001
+        logger.debug("Could not update digest status message", exc_info=True)
 
 
 async def hide_bottom_buttons(
@@ -228,51 +290,94 @@ async def send_digest_to_chat(
     digest: DigestService = context.application.bot_data["digest"]
     db: Database = context.application.bot_data["db"]
     db.ensure_user(chat_id)
-    allowed, ent = db.consume_digest_quota(chat_id)
-    if not allowed:
-        limits = ent.limits()
-        buy_hint = (
-            "Оформите Pro: /buy pro"
-            if is_private_chat(update.effective_chat)
-            else group_buy_hint()
+
+    lock = _digest_lock(context, chat_id)
+    if lock.locked():
+        tip = (
+            "Сводка уже собирается — подождите немного."
+            if update.callback_query
+            else "Сводка уже собирается — подождите немного."
         )
-        await update.effective_message.reply_text(
-            f"Лимит сводок на сегодня ({limits.max_digests_per_day}).\n"
-            f"{buy_hint}\nСтатус: /plan"
-        )
-        return
-    status_text = (
-        "Собираю только новое…"
-        if only_unseen
-        else "Собираю сводку по реакциям…"
-    )
-    await ensure_reply_keyboard_cleared(update, context)
-    status = await update.effective_message.reply_text(status_text)
-    try:
-        items, errors, topics, days_used, analysis = await digest.collect_for_user(
-            chat_id, days=days, only_unseen=only_unseen
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Digest failed for chat %s", chat_id)
-        await status.edit_text("Не удалось собрать сводку. Попробуйте позже.")
+        if update.callback_query:
+            await update.callback_query.answer(tip, show_alert=True)
+        else:
+            await update.effective_message.reply_text(tip)
         return
 
-    pages = digest.format_digest(
-        analysis, days_used, errors=errors, topics=topics
-    )
-    _store_digest_pages(context, chat_id, pages)
-    digest.mark_digest_delivered(chat_id, items, trigger=trigger)
-    markup = (
-        digest_page_keyboard(0, len(pages))
-        if len(pages) > 1
-        else back_home_keyboard()
-    )
-    await status.edit_text(
-        pages[0],
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-        reply_markup=markup,
-    )
+    async with lock:
+        allowed, ent = db.consume_digest_quota(chat_id)
+        if not allowed:
+            limits = ent.limits()
+            buy_hint = (
+                "Оформите Pro: /buy pro"
+                if is_private_chat(update.effective_chat)
+                else group_buy_hint()
+            )
+            await update.effective_message.reply_text(
+                f"Лимит сводок на сегодня ({limits.max_digests_per_day}).\n"
+                f"{buy_hint}\nСтатус: /plan"
+            )
+            return
+        status_text = (
+            "Собираю только новое…"
+            if only_unseen
+            else "Собираю сводку по реакциям…"
+        )
+        await ensure_reply_keyboard_cleared(update, context)
+        status = await update.effective_message.reply_text(status_text)
+
+        async def on_progress(message: str) -> None:
+            await _safe_edit_status(status, message)
+
+        try:
+            items, errors, topics, days_used, analysis = await digest.collect_for_user(
+                chat_id,
+                days=days,
+                only_unseen=only_unseen,
+                progress=on_progress,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Digest failed for chat %s", chat_id)
+            await _safe_edit_status(
+                status, "Не удалось собрать сводку. Попробуйте позже."
+            )
+            return
+
+        pages = digest.format_digest(
+            analysis, days_used, errors=errors, topics=topics
+        )
+        _store_digest_pages(context, chat_id, pages, db=db)
+        digest.mark_digest_delivered(chat_id, items, trigger=trigger)
+        markup = (
+            digest_page_keyboard(0, len(pages))
+            if len(pages) > 1
+            else back_home_keyboard()
+        )
+        try:
+            await status.edit_text(
+                pages[0],
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+                reply_markup=markup,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Failed to edit digest status for chat %s — sending new message",
+                chat_id,
+            )
+            try:
+                await update.effective_message.reply_text(
+                    pages[0],
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                    reply_markup=markup,
+                )
+                await _safe_edit_status(status, "Готово — сводка ниже.")
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to deliver digest for chat %s", chat_id)
+                await _safe_edit_status(
+                    status, "Сводка собрана, но не удалось показать текст. Попробуйте ещё раз."
+                )
 
 
 def sources_text(db: Database, user_id: int) -> str:
@@ -485,7 +590,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         pages = _get_digest_pages(context, chat_id)
         if not pages:
             await query.answer(
-                "Сводка устарела — нажмите «Сводка» ещё раз.",
+                "Страницы сводки больше нет в памяти бота — "
+                "нажмите «Сводка» ещё раз.",
                 show_alert=True,
             )
             return
@@ -495,12 +601,22 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if chat_id in sessions:
             sessions[chat_id]["page"] = page
         try:
+            db.set_digest_session_page(chat_id, page)
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "Could not persist digest page for chat %s", chat_id, exc_info=True
+            )
+        try:
             await query.edit_message_text(
                 pages[page],
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
                 reply_markup=digest_page_keyboard(page, len(pages)),
             )
+        except BadRequest as exc:
+            # Identical content / message not modified — treat as success.
+            if "message is not modified" not in str(exc).lower():
+                logger.exception("Failed to paginate digest for chat %s", chat_id)
         except Exception:  # noqa: BLE001
             logger.exception("Failed to paginate digest for chat %s", chat_id)
         return
@@ -523,13 +639,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             reply_markup=digest_mode_keyboard(),
         )
         return
-    if data == "m:news:top":
+    if data == "m:news:top" or data.startswith("m:news:top:"):
         clear_awaiting(context)
-        await send_digest_to_chat(update, context, only_unseen=False)
+        days = _parse_digest_days_callback(data)
+        await send_digest_to_chat(
+            update, context, days=days, only_unseen=False
+        )
         return
-    if data == "m:news:new":
+    if data == "m:news:new" or data.startswith("m:news:new:"):
         clear_awaiting(context)
-        await send_digest_to_chat(update, context, only_unseen=True)
+        days = _parse_digest_days_callback(data)
+        await send_digest_to_chat(
+            update, context, days=days, only_unseen=True
+        )
         return
     if data == "m:sources":
         await show_sources_panel(update, context, edit=True)
@@ -762,7 +884,10 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await ensure_reply_keyboard_cleared(update, context)
 
     if text == BTN_NEWS:
-        await send_digest_to_chat(update, context, only_unseen=False)
+        await update.message.reply_text(
+            "Какую сводку показать?",
+            reply_markup=digest_mode_keyboard(),
+        )
     elif text == BTN_NEW_ONLY:
         await send_digest_to_chat(update, context, only_unseen=True)
     elif text == BTN_SOURCES:

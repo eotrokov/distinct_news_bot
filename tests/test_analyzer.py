@@ -129,6 +129,28 @@ def test_deduplicate_merges_paraphrased_story_keeps_longer_title():
     assert "коммерческие" in out[0].title
 
 
+def test_deduplicate_merges_ru_en_programmatic_story():
+    analyzer = NewsAnalyzer()
+    ru = _item(
+        "Программатик-страницы: как масштабировать SEO",
+        "Гайд по programmatic pages и масштабированию контента.",
+        url="https://ru.example/p",
+        reactions=12,
+        body="Гайд по programmatic pages и масштабированию контента.",
+    )
+    en = _item(
+        "Programmatic SEO pages: how to scale",
+        "Guide to programmatic pages and scaling SEO content.",
+        url="https://en.example/p",
+        reactions=40,
+        body="Guide to programmatic pages and scaling SEO content.",
+    )
+    out = analyzer.deduplicate([ru, en])
+    assert len(out) == 1
+    assert out[0].reactions == 40
+    assert len(out[0].urls) == 2
+
+
 def test_process_groups_by_seo_categories_sorted_by_reactions():
     analyzer = NewsAnalyzer()
     low = _item(

@@ -102,8 +102,13 @@ def test_schedule_keyboard():
 def test_digest_mode_keyboard():
     kb = digest_mode_keyboard()
     data = {b.callback_data for r in kb.inline_keyboard for b in r}
-    assert "m:news:top" in data
-    assert "m:news:new" in data
+    assert "m:news:top:1" in data
+    assert "m:news:top:7" in data
+    assert "m:news:new:1" in data
+    assert "m:news:new:7" in data
+    texts = [b.text for r in kb.inline_keyboard for b in r]
+    assert any("1 день" in t for t in texts)
+    assert any("7 дней" in t for t in texts)
 
 
 def test_sources_and_topics_keyboards():

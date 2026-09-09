@@ -84,3 +84,25 @@ def test_db_digest_events_and_stats(tmp_path):
     assert by_id[user_id].digests_7d == 2
     assert by_id[group_id].is_group is True
     assert by_id[group_id].digests_7d == 1
+
+
+def test_db_digest_session_persistence(tmp_path):
+    db = Database(str(tmp_path / "sessions.sqlite3"))
+    chat_id = 555
+    pages = ["page one HTML", "page two HTML", "page three"]
+    db.save_digest_session(chat_id, pages, page=0)
+    stored = db.get_digest_session(chat_id)
+    assert stored is not None
+    assert stored["pages"] == pages
+    assert stored["page"] == 0
+
+    db.set_digest_session_page(chat_id, 2)
+    stored = db.get_digest_session(chat_id)
+    assert stored is not None
+    assert stored["page"] == 2
+
+    db.save_digest_session(chat_id, ["only"], page=0)
+    stored = db.get_digest_session(chat_id)
+    assert stored is not None
+    assert stored["pages"] == ["only"]
+    assert stored["page"] == 0
