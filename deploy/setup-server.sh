@@ -24,7 +24,7 @@ fi
 systemctl enable --now docker
 
 if [[ -f "$(dirname "$0")/open-dashboard-port.sh" ]]; then
-  bash "$(dirname "$0")/open-dashboard-port.sh" 443 || true
+  bash "$(dirname "$0")/open-dashboard-port.sh" 8080 || true
 fi
 
 mkdir -p "$APP_DIR/data"
