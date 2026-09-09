@@ -57,6 +57,10 @@ def test_dashboard_shows_stats(tmp_path):
     index = client.get("/")
     assert 'name="viewport"' in index.text
     assert 'minmax(200px, 1fr)' in index.text or "repeat(2, minmax(0, 1fr))" in index.text
+    assert 'id="menu-toggle"' in index.text
+    assert 'id="site-nav"' in index.text
+    assert 'aria-controls="site-nav"' in index.text
+    assert "dn-nav-open" in index.text
 
 
 def test_dashboard_users_sort(tmp_path):

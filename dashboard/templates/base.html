@@ -44,17 +44,88 @@
       border-bottom: 1px solid var(--border);
       padding: 1rem 1.5rem;
     }
+    .header-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
     header h1 {
       margin: 0;
       font-size: 1.25rem;
       font-weight: 600;
       word-break: break-word;
+      flex: 1;
+      min-width: 0;
     }
-    nav {
+    .menu-toggle {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      min-height: 44px;
+      min-width: 44px;
+      padding: 0.35rem 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .menu-toggle:hover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .menu-toggle:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .menu-toggle-icon {
+      display: inline-block;
+      width: 1.1rem;
+      height: 0.85rem;
+      position: relative;
+    }
+    .menu-toggle-icon::before,
+    .menu-toggle-icon::after,
+    .menu-toggle-icon span {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 2px;
+      border-radius: 1px;
+      background: currentColor;
+      transition: transform 0.2s ease, opacity 0.2s ease, top 0.2s ease;
+    }
+    .menu-toggle-icon span { top: 50%; margin-top: -1px; }
+    .menu-toggle-icon::before { top: 0; }
+    .menu-toggle-icon::after { bottom: 0; }
+    header.nav-open .menu-toggle-icon span { opacity: 0; }
+    header.nav-open .menu-toggle-icon::before {
+      top: 50%;
+      margin-top: -1px;
+      transform: rotate(45deg);
+    }
+    header.nav-open .menu-toggle-icon::after {
+      bottom: 50%;
+      margin-bottom: -1px;
+      transform: rotate(-45deg);
+    }
+    .menu-toggle-label { font-size: 0.85rem; }
+    nav#site-nav {
       margin-top: 0.5rem;
-      display: flex;
+      display: none;
       flex-wrap: wrap;
       gap: 0.75rem 1rem;
+    }
+    header.nav-open nav#site-nav {
+      display: flex;
     }
     nav a {
       color: var(--accent);
@@ -66,6 +137,12 @@
       align-items: center;
     }
     nav a:hover { text-decoration: underline; }
+    @media (min-width: 721px) {
+      .menu-toggle-label { display: inline; }
+    }
+    @media (max-width: 720px) {
+      .menu-toggle-label { display: none; }
+    }
     main {
       max-width: 1100px;
       margin: 0 auto;
@@ -189,6 +266,19 @@
       header h1 {
         font-size: 1.05rem;
       }
+      nav#site-nav {
+        flex-direction: column;
+        gap: 0;
+        margin-top: 0.75rem;
+        border-top: 1px solid var(--border);
+        padding-top: 0.25rem;
+      }
+      nav a {
+        width: 100%;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--border);
+      }
+      nav a:last-child { border-bottom: none; }
       main {
         padding: 1rem;
       }
@@ -267,9 +357,22 @@
   </style>
 </head>
 <body>
-  <header>
-    <h1>Distinct News — статистика</h1>
-    <nav>
+  <header id="site-header" class="nav-open">
+    <div class="header-bar">
+      <h1>Distinct News — статистика</h1>
+      <button
+        type="button"
+        class="menu-toggle"
+        id="menu-toggle"
+        aria-controls="site-nav"
+        aria-expanded="true"
+        aria-label="Скрыть меню"
+      >
+        <span class="menu-toggle-icon" aria-hidden="true"><span></span></span>
+        <span class="menu-toggle-label" data-label-open="Меню" data-label-close="Скрыть">Меню</span>
+      </button>
+    </div>
+    <nav id="site-nav" aria-label="Основная навигация">
       <a href="/">Обзор</a>
       <a href="/users">Пользователи</a>
     </nav>
@@ -277,5 +380,49 @@
   <main>
     {% block content %}{% endblock %}
   </main>
+  <script>
+    (function () {
+      var STORAGE_KEY = "dn-nav-open";
+      var header = document.getElementById("site-header");
+      var toggle = document.getElementById("menu-toggle");
+      var label = toggle && toggle.querySelector(".menu-toggle-label");
+      if (!header || !toggle) return;
+
+      function isMobile() {
+        return window.matchMedia("(max-width: 720px)").matches;
+      }
+
+      function setOpen(open) {
+        header.classList.toggle("nav-open", open);
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        toggle.setAttribute("aria-label", open ? "Скрыть меню" : "Показать меню");
+        if (label) {
+          label.textContent = open
+            ? (label.getAttribute("data-label-close") || "Скрыть")
+            : (label.getAttribute("data-label-open") || "Меню");
+        }
+        try {
+          localStorage.setItem(STORAGE_KEY, open ? "1" : "0");
+        } catch (e) {}
+      }
+
+      function readStored() {
+        try {
+          return localStorage.getItem(STORAGE_KEY);
+        } catch (e) {
+          return null;
+        }
+      }
+
+      var stored = readStored();
+      if (stored === "1") setOpen(true);
+      else if (stored === "0") setOpen(false);
+      else setOpen(!isMobile());
+
+      toggle.addEventListener("click", function () {
+        setOpen(!header.classList.contains("nav-open"));
+      });
+    })();
+  </script>
 </body>
 </html>
