@@ -45,12 +45,12 @@ ssh_cmd "mkdir -p $(printf %q "$DEPLOY_PATH")/data; \
   fi"
 
 echo "==> Freeing disk space on remote before sync"
+# Keep tagged images (incl. python base) so builds work when Docker Hub is unreachable.
 # Do not prune volumes — bot-data must survive deploys.
 ssh_cmd "df -h / | tail -1; \
   docker container prune -f >/dev/null 2>&1 || true; \
-  docker image prune -af >/dev/null 2>&1 || true; \
-  docker builder prune -af >/dev/null 2>&1 || true; \
-  docker system prune -af >/dev/null 2>&1 || true; \
+  docker image prune -f >/dev/null 2>&1 || true; \
+  docker builder prune -af --filter until=168h >/dev/null 2>&1 || true; \
   (command -v apt-get >/dev/null && apt-get clean >/dev/null 2>&1) || true; \
   rm -rf /tmp/pip-* /var/tmp/pip-* >/dev/null 2>&1 || true; \
   df -h / | tail -1"
@@ -84,10 +84,21 @@ EOF
 fi
 
 echo "==> Building and restarting container (branch hint: $DEPLOY_BRANCH)"
+# Prefer local base images so deploys survive Docker Hub / IPv6 outages.
+# Prefer IPv4 for registry auth (this VPS often cannot reach Docker Hub over IPv6).
+# Fall back to a registry pull only if the local build cannot resolve the base image.
 ssh_cmd "cd $(printf %q "$DEPLOY_PATH") && \
-  docker image prune -f >/dev/null 2>&1 || true; \
   docker builder prune -f --filter until=72h >/dev/null 2>&1 || true; \
-  docker compose up -d --build --remove-orphans && docker compose ps"
+  if [ -f /etc/gai.conf ] || sudo test -e /etc/gai.conf; then \
+    sudo grep -q 'precedence :ffff:0:0/96' /etc/gai.conf 2>/dev/null || \
+      echo 'precedence :ffff:0:0/96  100' | sudo tee -a /etc/gai.conf >/dev/null || true; \
+  fi; \
+  if docker compose build --pull=never; then \
+    docker compose up -d --remove-orphans; \
+  else \
+    echo 'Local-cache build failed; retrying with registry pull…' >&2; \
+    docker compose build --pull=always && docker compose up -d --remove-orphans; \
+  fi && docker compose ps"
 
 echo "==> Publishing dashboard on ports 80 and 443 via nginx"
 ssh_cmd "sudo bash $(printf %q "$DEPLOY_PATH")/deploy/setup-dashboard-nginx.sh $(printf %q "$DEPLOY_PATH") 8080 || \
