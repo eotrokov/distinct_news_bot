@@ -81,6 +81,56 @@ def test_are_near_duplicates_rejects_different_events():
     assert not are_near_duplicates(a, b)
 
 
+def test_are_near_duplicates_ru_en_programmatic_pages():
+    ru = _item(
+        "Программатик-страницы: как масштабировать SEO-контент",
+        "https://ru.example/programmatic",
+        "seo_ru",
+        summary=(
+            "Разбираем, как строить programmatic pages и масштабировать "
+            "семантическое ядро без потери качества."
+        ),
+    )
+    en = _item(
+        "Programmatic SEO pages: how to scale content",
+        "https://en.example/programmatic",
+        "searchenginejournal",
+        summary=(
+            "A practical guide to programmatic pages and scaling SEO "
+            "content production across large keyword sets."
+        ),
+    )
+    assert are_near_duplicates(ru, en)
+
+
+def test_are_near_duplicates_ru_en_google_core_update():
+    ru = _item(
+        "Google подтвердил core update в поиске",
+        "https://ru.example/core",
+        summary="Алгоритм ранжирования в выдаче Google изменился.",
+    )
+    en = _item(
+        "Google confirms March core update in Search",
+        "https://en.example/core",
+        summary="Google Search ranking algorithm update is rolling out.",
+    )
+    assert are_near_duplicates(ru, en)
+
+
+def test_are_near_duplicates_rejects_unrelated_ru_en():
+    ru = _item(
+        "Яндекс обновил Вебмастер и сниппеты",
+        "https://ru.example/yandex",
+        summary="В Вебмастере Яндекса появились новые отчёты по сниппетам.",
+    )
+    en = _item(
+        "Ahrefs releases new backlink index",
+        "https://en.example/ahrefs",
+        summary="Ahrefs updated its backlink index and Domain Rating scores.",
+    )
+    assert not are_near_duplicates(ru, en)
+
+
 def test_parse_add_args():
     t, ident, title = parse_add_args(["tg", "bbcnews"])
     assert t == "telegram"

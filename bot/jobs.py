@@ -72,6 +72,10 @@ async def deliver_digest_to_user(
 
     sessions = context.application.bot_data.setdefault("digest_sessions", {})
     sessions[user_id] = {"pages": pages, "page": 0}
+    try:
+        db.save_digest_session(user_id, pages, page=0)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to persist scheduled digest session for %s", user_id)
 
     digest.mark_digest_delivered(user_id, items, trigger="scheduled")
     markup = back_home_keyboard()

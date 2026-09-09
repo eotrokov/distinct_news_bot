@@ -125,6 +125,7 @@ class DigestService:
         only_unseen: bool = False,
         since: datetime | None = None,
         until: datetime | None = None,
+        progress: Any | None = None,
     ) -> tuple[list[NewsItem], list[str], list[str], int, dict[str, Any]]:
         """Return (items, errors, topics, days_used, analysis).
 
@@ -135,7 +136,19 @@ class DigestService:
         Optional ``since`` / ``until`` (UTC-aware) override the rolling
         ``days`` window — used for scheduled digests of the previous
         calendar day.
+
+        Optional ``progress`` is an async callable ``(str) -> None`` used to
+        update UI while a long collect is running.
         """
+
+        async def _progress(message: str) -> None:
+            if progress is None:
+                return
+            try:
+                await progress(message)
+            except Exception:  # noqa: BLE001
+                logger.debug("Digest progress update failed", exc_info=True)
+
         days_used = clamp_digest_days(days, self.settings.default_digest_days)
         if since is not None and until is not None and until > since:
             span = until - since
@@ -180,6 +193,7 @@ class DigestService:
         # Public preview ~20 posts/page; longer windows paginate deeper, like weekly.
         max_pages = 5 if days_used >= 5 else 2
 
+        await _progress("Читаю источники…")
         results = await asyncio.gather(
             *[
                 self._safe_fetch(source, since=window_since, max_pages=max_pages)
@@ -214,6 +228,7 @@ class DigestService:
                 if item_matches_topics(item.title, item.summary or item.body, topics)
             ]
 
+        await _progress("Фильтрую и убираю дубли…")
         analysis = self.analyzer.process(
             filtered,
             period=days_used,
@@ -273,9 +288,27 @@ class DigestService:
             }
 
         if ai_summary_active(self.settings) and limited:
-            enriched = await enrich_items(limited, self.settings)
-            analysis = merge_items_into_analysis(analysis, enriched)
-            limited = enriched
+            await _progress("Пишу выжимки…")
+            # Cap total AI wait so "update digest" cannot hang forever.
+            ai_budget = max(
+                45.0,
+                float(self.settings.ai_timeout_seconds)
+                * max(3, min(8, len(limited))),
+            )
+            try:
+                enriched = await asyncio.wait_for(
+                    enrich_items(limited, self.settings),
+                    timeout=ai_budget,
+                )
+                analysis = merge_items_into_analysis(analysis, enriched)
+                limited = enriched
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "AI enrich timed out after %.0fs for user %s — "
+                    "keeping rule-based summaries",
+                    ai_budget,
+                    user_id,
+                )
 
         return limited, errors, topics, days_used, analysis
 

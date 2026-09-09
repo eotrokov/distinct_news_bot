@@ -115,12 +115,22 @@ def digest_mode_keyboard() -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton(
-                    "🔥 Главное за период", callback_data="m:news:top"
+                    "🔥 Главное · 1 день", callback_data="m:news:top:1"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    "🆕 Только новое", callback_data="m:news:new"
+                    "🔥 Главное · 7 дней", callback_data="m:news:top:7"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🆕 Только новое · 1 день", callback_data="m:news:new:1"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🆕 Только новое · 7 дней", callback_data="m:news:new:7"
                 )
             ],
             [InlineKeyboardButton("« Меню", callback_data="m:home")],

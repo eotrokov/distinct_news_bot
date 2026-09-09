@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -141,6 +142,14 @@ class Database:
                     ON digest_events(user_id, delivered_at);
                 CREATE INDEX IF NOT EXISTS idx_digest_events_at
                     ON digest_events(delivered_at);
+
+                CREATE TABLE IF NOT EXISTS digest_sessions (
+                    chat_id INTEGER PRIMARY KEY,
+                    pages_json TEXT NOT NULL,
+                    page INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(chat_id) REFERENCES users(user_id) ON DELETE CASCADE
+                );
                 """
             )
             self._ensure_user_schedule_columns(conn)
@@ -226,6 +235,68 @@ class Database:
             conn.execute(
                 "UPDATE users SET last_digest_at = NULL WHERE user_id = ?",
                 (user_id,),
+            )
+
+    def save_digest_session(
+        self, chat_id: int, pages: list[str], *, page: int = 0
+    ) -> None:
+        """Persist digest pages so pagination survives bot restarts."""
+        if not pages:
+            return
+        self.ensure_user(chat_id)
+        page = max(0, min(int(page), len(pages) - 1))
+        payload = json.dumps(pages, ensure_ascii=False)
+        stamp = _utc_now().isoformat()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO digest_sessions(chat_id, pages_json, page, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    pages_json = excluded.pages_json,
+                    page = excluded.page,
+                    updated_at = excluded.updated_at
+                """,
+                (chat_id, payload, page, stamp),
+            )
+
+    def get_digest_session(self, chat_id: int) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT pages_json, page, updated_at
+                FROM digest_sessions
+                WHERE chat_id = ?
+                """,
+                (chat_id,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            pages = json.loads(row["pages_json"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(pages, list) or not pages:
+            return None
+        if not all(isinstance(p, str) for p in pages):
+            return None
+        page = int(row["page"] or 0)
+        page = max(0, min(page, len(pages) - 1))
+        return {
+            "pages": pages,
+            "page": page,
+            "updated_at": _parse_dt(row["updated_at"]),
+        }
+
+    def set_digest_session_page(self, chat_id: int, page: int) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE digest_sessions
+                SET page = ?, updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (max(0, int(page)), _utc_now().isoformat(), chat_id),
             )
 
     def add_source(
