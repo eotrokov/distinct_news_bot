@@ -60,7 +60,7 @@ SEO-дайджест из Telegram-каналов и RSS-блогов: без д
 настраивать могут администраторы.{billing_note}
 
 Команды:
-/menu — меню
+/menu — меню (и вернуть кнопки)
 /add @channel — добавить канал
 /add @a @b — несколько каналов
 /add rss https://site.com/feed/ — RSS-фид

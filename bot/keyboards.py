@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 
 from bot.channel_presets import CHANNEL_PRESETS, RSS_PRESETS, ChannelPreset, RssPreset
 from bot.models import Source
@@ -14,6 +19,7 @@ BTN_SCHEDULE = "Расписание"
 BTN_PLAN = "Подписка"
 BTN_MENU = "Меню"
 BTN_HELP = "Помощь"
+BTN_HIDE = "Скрыть кнопки"
 
 REPLY_BUTTONS = {
     BTN_NEWS,
@@ -24,6 +30,7 @@ REPLY_BUTTONS = {
     BTN_PLAN,
     BTN_MENU,
     BTN_HELP,
+    BTN_HIDE,
 }
 
 TELEGRAM_SOURCE_PROMPT = (
@@ -54,10 +61,22 @@ def main_reply_keyboard() -> ReplyKeyboardMarkup:
     else:
         rows.append([BTN_SCHEDULE])
     rows.append([BTN_MENU, BTN_HELP])
+    rows.append([BTN_HIDE])
     return ReplyKeyboardMarkup(
         rows,
         resize_keyboard=True,
-        is_persistent=True,
+        is_persistent=False,
+    )
+
+
+def hide_reply_keyboard() -> ReplyKeyboardRemove:
+    return ReplyKeyboardRemove()
+
+
+def show_reply_keyboard_markup() -> InlineKeyboardMarkup:
+    """Inline affordance to restore the bottom reply keyboard after hiding."""
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Показать кнопки", callback_data="m:kb:show")]]
     )
 
 
@@ -82,7 +101,12 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
         rows.append(
             [InlineKeyboardButton("Расписание", callback_data="m:schedule")]
         )
-    rows.append([InlineKeyboardButton("Помощь", callback_data="m:help")])
+    rows.append(
+        [
+            InlineKeyboardButton("Помощь", callback_data="m:help"),
+            InlineKeyboardButton("Скрыть кнопки", callback_data="m:kb:hide"),
+        ]
+    )
     return InlineKeyboardMarkup(rows)
 
 
