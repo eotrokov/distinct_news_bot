@@ -49,13 +49,37 @@ logger = logging.getLogger(__name__)
 
 AWAITING_KEY = "awaiting"
 DIGEST_SESSIONS_KEY = "digest_sessions"
+REPLY_KB_CLEARED_KEY = "reply_kb_cleared"
+REPLY_KB_WANTED_KEY = "reply_kb_wanted"
 
 
-def _reply_kb(update: Update):
-    """Reply keyboard only in private chats."""
-    if is_private_chat(update.effective_chat):
+def _reply_kb(update: Update, context: ContextTypes.DEFAULT_TYPE | None = None):
+    """Private chats: keep reply keyboard only if the user restored it."""
+    if not is_private_chat(update.effective_chat):
+        return None
+    if context is not None and context.user_data.get(REPLY_KB_WANTED_KEY):
         return main_reply_keyboard()
-    return None
+    return hide_reply_keyboard()
+
+
+async def ensure_reply_keyboard_cleared(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Hide sticky reply keyboard unless the user explicitly restored it."""
+    if not is_private_chat(update.effective_chat):
+        return
+    if context.user_data.get(REPLY_KB_WANTED_KEY):
+        return
+    if context.user_data.get(REPLY_KB_CLEARED_KEY):
+        return
+    if not update.effective_message:
+        return
+    await update.effective_message.reply_text(
+        "Нижние кнопки скрыты — пользуйтесь меню под сообщениями или /menu.",
+        reply_markup=hide_reply_keyboard(),
+    )
+    context.user_data[REPLY_KB_CLEARED_KEY] = True
+    context.user_data[REPLY_KB_WANTED_KEY] = False
 
 
 async def _require_manage(
@@ -75,13 +99,13 @@ def _ws(update: Update) -> int | None:
     return workspace_id(update)
 
 MENU_TEXT = (
-    "Управление ботом кнопками.\n"
-    "Снизу — быстрые кнопки (их можно скрыть), здесь — подробное меню."
+    "Управление ботом кнопками ниже.\n"
+    "Нижнюю панель можно вернуть через «Показать кнопки»."
 )
 
 HIDE_KEYBOARD_TEXT = (
-    "Кнопки скрыты.\n"
-    "Вернуть: /menu или «Показать кнопки»."
+    "Нижние кнопки скрыты.\n"
+    "Вернуть: «Показать кнопки» в меню."
 )
 
 
@@ -137,6 +161,8 @@ async def hide_bottom_buttons(
         HIDE_KEYBOARD_TEXT,
         reply_markup=hide_reply_keyboard(),
     )
+    context.user_data[REPLY_KB_CLEARED_KEY] = True
+    context.user_data[REPLY_KB_WANTED_KEY] = False
     await update.effective_message.reply_text(
         "Меню по-прежнему доступно командами и кнопками ниже.",
         reply_markup=show_reply_keyboard_markup(),
@@ -156,8 +182,10 @@ async def show_bottom_buttons(
             )
         return
     if update.effective_message:
+        context.user_data[REPLY_KB_CLEARED_KEY] = False
+        context.user_data[REPLY_KB_WANTED_KEY] = True
         await update.effective_message.reply_text(
-            "Быстрые кнопки снова внизу экрана.",
+            "Быстрые кнопки снова внизу экрана. Скрыть — «Скрыть кнопки».",
             reply_markup=main_reply_keyboard(),
         )
 
@@ -176,15 +204,11 @@ async def show_main_menu(
             "Управлять настройками могут администраторы."
         )
     markup = main_inline_keyboard()
+    await ensure_reply_keyboard_cleared(update, context)
     if edit and update.callback_query and update.callback_query.message:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
         return
     if update.effective_message:
-        if is_private_chat(update.effective_chat):
-            await update.effective_message.reply_text(
-                "Быстрые кнопки внизу экрана.",
-                reply_markup=main_reply_keyboard(),
-            )
         await update.effective_message.reply_text(text, reply_markup=markup)
 
 
@@ -222,6 +246,7 @@ async def send_digest_to_chat(
         if only_unseen
         else "Собираю сводку по реакциям…"
     )
+    await ensure_reply_keyboard_cleared(update, context)
     status = await update.effective_message.reply_text(status_text)
     try:
         items, errors, topics, days_used, analysis = await digest.collect_for_user(
@@ -445,6 +470,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.answer()
         return
     db.ensure_user(chat_id)
+    await ensure_reply_keyboard_cleared(update, context)
 
     if data == "m:dg:noop":
         await query.answer()
@@ -732,6 +758,8 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     db: Database = context.application.bot_data["db"]
     db.ensure_user(chat_id)
+    if text != BTN_HIDE:
+        await ensure_reply_keyboard_cleared(update, context)
 
     if text == BTN_NEWS:
         await send_digest_to_chat(update, context, only_unseen=False)
@@ -752,7 +780,7 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif text == BTN_HELP:
         from bot.handlers import help_text
 
-        await update.message.reply_text(help_text(), reply_markup=_reply_kb(update))
+        await update.message.reply_text(help_text(), reply_markup=_reply_kb(update, context))
 
 
 async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -777,7 +805,7 @@ async def on_awaiting_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     db: Database = context.application.bot_data["db"]
     db.ensure_user(chat_id)
     kind = awaiting.get("kind")
-    kb = _reply_kb(update)
+    kb = _reply_kb(update, context)
 
     try:
         if kind == "onboard":
@@ -908,6 +936,6 @@ async def cancel_awaiting(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if update.message:
         await update.message.reply_text(
             "Отменено.",
-            reply_markup=_reply_kb(update),
+            reply_markup=_reply_kb(update, context),
         )
         await show_main_menu(update, context)

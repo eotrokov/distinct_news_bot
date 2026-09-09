@@ -40,7 +40,10 @@ def test_main_keyboards():
         btn.callback_data == "m:schedule" for row in inline.inline_keyboard for btn in row
     )
     assert any(btn.callback_data == "m:plan" for row in inline.inline_keyboard for btn in row)
-    assert any(btn.callback_data == "m:kb:hide" for row in inline.inline_keyboard for btn in row)
+    assert any(btn.callback_data == "m:kb:show" for row in inline.inline_keyboard for btn in row)
+    assert not any(
+        btn.callback_data == "m:kb:hide" for row in inline.inline_keyboard for btn in row
+    )
     assert not any(
         btn.callback_data == "m:reset" for row in inline.inline_keyboard for btn in row
     )

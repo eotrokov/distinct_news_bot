@@ -25,10 +25,16 @@ from bot.chat_scope import (
 )
 from bot.db import Database
 from bot.digest import parse_add_args, parse_days_arg
-from bot.keyboards import REPLY_BUTTONS, main_inline_keyboard, main_reply_keyboard
+from bot.keyboards import (
+    REPLY_BUTTONS,
+    hide_reply_keyboard,
+    main_inline_keyboard,
+    main_reply_keyboard,
+)
 from bot.menu import (
     cancel_awaiting,
     clear_awaiting,
+    ensure_reply_keyboard_cleared,
     get_awaiting,
     on_awaiting_text,
     on_callback,
@@ -108,10 +114,15 @@ HELP_TEXT = HELP_TEXT_BASE.format(
 )
 
 
-def _reply_kb(update: Update):
-    if is_private_chat(update.effective_chat):
+def _reply_kb(update: Update, context: ContextTypes.DEFAULT_TYPE | None = None):
+    """Private chats: keep reply keyboard only if the user restored it."""
+    from bot.menu import REPLY_KB_WANTED_KEY
+
+    if not is_private_chat(update.effective_chat):
+        return None
+    if context is not None and context.user_data.get(REPLY_KB_WANTED_KEY):
         return main_reply_keyboard()
-    return None
+    return hide_reply_keyboard()
 
 
 async def _deny_if_cannot_manage(
@@ -153,15 +164,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         from bot.menu import set_awaiting
 
         set_awaiting(context, {"kind": "onboard"})
-        await update.message.reply_text(
-            ONBOARD_PROMPT,
-            reply_markup=main_reply_keyboard(),
-        )
+        await ensure_reply_keyboard_cleared(update, context)
+        await update.message.reply_text(ONBOARD_PROMPT)
         return
 
+    await ensure_reply_keyboard_cleared(update, context)
     await update.message.reply_text(
-        "Снова рады вас видеть. Нажмите «Сводка» или «Только новое».",
-        reply_markup=main_reply_keyboard(),
+        "Снова рады вас видеть. Откройте /menu или кнопки под сообщением.",
     )
     await update.message.reply_text(
         "Меню:",
@@ -171,7 +180,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
-        await update.message.reply_text(help_text(), reply_markup=_reply_kb(update))
+        await update.message.reply_text(help_text(), reply_markup=_reply_kb(update, context))
 
 
 async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -194,7 +203,7 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     db.ensure_user(chat_id)
     args = list(context.args or [])
     joined = " ".join(args)
-    kb = _reply_kb(update)
+    kb = _reply_kb(update, context)
 
     if args and extract_addlist_slug(joined) and "addlist" in joined.lower():
         await begin_addlist_import(update, context, joined)
@@ -300,7 +309,7 @@ async def begin_addlist_import(
     chat_id = workspace_id(update)
     if chat_id is None:
         return
-    kb = _reply_kb(update)
+    kb = _reply_kb(update, context)
     handles = parse_telegram_handles(raw)
     if handles:
         db: Database = context.application.bot_data["db"]
@@ -567,7 +576,7 @@ async def delete_me_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         f"Все данные {where} удалены (источники, темы, просмотренное, подписка).\n"
         "Нажмите /start, чтобы начать заново.",
-        reply_markup=_reply_kb(update),
+        reply_markup=_reply_kb(update, context),
     )
 
 
@@ -664,7 +673,7 @@ async def reset_cursor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(
         f"Просмотренное сброшено ({cleared}). "
         "«Только новое» снова покажет эти посты.",
-        reply_markup=_reply_kb(update),
+        reply_markup=_reply_kb(update, context),
     )
 
 

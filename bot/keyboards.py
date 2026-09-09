@@ -104,7 +104,7 @@ def main_inline_keyboard() -> InlineKeyboardMarkup:
     rows.append(
         [
             InlineKeyboardButton("Помощь", callback_data="m:help"),
-            InlineKeyboardButton("Скрыть кнопки", callback_data="m:kb:hide"),
+            InlineKeyboardButton("Показать кнопки", callback_data="m:kb:show"),
         ]
     )
     return InlineKeyboardMarkup(rows)
