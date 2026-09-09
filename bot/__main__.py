@@ -11,6 +11,7 @@ from bot.digest import DigestService
 from bot.handlers import register_handlers
 from bot.jobs import setup_schedule_jobs
 from bot.plans import set_monetization_enabled
+from bot.telegram_util import on_telegram_error, prefer_ipv4
 
 
 def setup_logging(level: str) -> None:
@@ -64,10 +65,12 @@ def build_app(settings: Settings) -> Application:
     app.bot_data["digest"] = digest
     app.bot_data["settings"] = settings
     register_handlers(app)
+    app.add_error_handler(on_telegram_error)
     return app
 
 
 def main() -> None:
+    prefer_ipv4()
     settings = Settings.from_env()
     setup_logging(settings.log_level)
     app = build_app(settings)
@@ -76,12 +79,13 @@ def main() -> None:
         "on" if settings.monetization_enabled else "off",
     )
     app.run_polling(
+        bootstrap_retries=-1,
         allowed_updates=[
             "message",
             "callback_query",
             "pre_checkout_query",
             "my_chat_member",
-        ]
+        ],
     )
 
 
