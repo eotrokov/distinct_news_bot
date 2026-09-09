@@ -11,6 +11,7 @@ from bot.db import Database
 from bot.digest import DigestService, parse_add_args
 from bot.keyboards import (
     BTN_HELP,
+    BTN_HIDE,
     BTN_MENU,
     BTN_NEW_ONLY,
     BTN_NEWS,
@@ -24,10 +25,12 @@ from bot.keyboards import (
     channel_presets_keyboard,
     digest_mode_keyboard,
     digest_page_keyboard,
+    hide_reply_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
     plan_keyboard,
     schedule_keyboard,
+    show_reply_keyboard_markup,
     sources_keyboard,
     topics_keyboard,
 )
@@ -73,7 +76,12 @@ def _ws(update: Update) -> int | None:
 
 MENU_TEXT = (
     "Управление ботом кнопками.\n"
-    "Снизу — быстрые кнопки, здесь — подробное меню."
+    "Снизу — быстрые кнопки (их можно скрыть), здесь — подробное меню."
+)
+
+HIDE_KEYBOARD_TEXT = (
+    "Кнопки скрыты.\n"
+    "Вернуть: /menu или «Показать кнопки»."
 )
 
 
@@ -106,6 +114,52 @@ def _get_digest_pages(
         return None
     pages = session.get("pages")
     return pages if isinstance(pages, list) and pages else None
+
+
+async def hide_bottom_buttons(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    from_callback: bool = False,
+) -> None:
+    """Remove the private-chat reply keyboard and offer a restore button."""
+    clear_awaiting(context)
+    if not is_private_chat(update.effective_chat):
+        msg = "Быстрые кнопки есть только в личке с ботом."
+        if update.effective_message:
+            await update.effective_message.reply_text(msg)
+        return
+
+    if not update.effective_message:
+        return
+
+    await update.effective_message.reply_text(
+        HIDE_KEYBOARD_TEXT,
+        reply_markup=hide_reply_keyboard(),
+    )
+    await update.effective_message.reply_text(
+        "Меню по-прежнему доступно командами и кнопками ниже.",
+        reply_markup=show_reply_keyboard_markup(),
+    )
+
+
+async def show_bottom_buttons(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Restore the private-chat reply keyboard."""
+    clear_awaiting(context)
+    if not is_private_chat(update.effective_chat):
+        if update.effective_message:
+            await update.effective_message.reply_text(
+                "Быстрые кнопки есть только в личке с ботом."
+            )
+        return
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            "Быстрые кнопки снова внизу экрана.",
+            reply_markup=main_reply_keyboard(),
+        )
 
 
 async def show_main_menu(
@@ -430,6 +484,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if data == "m:home":
         await show_main_menu(update, context, edit=True)
         return
+    if data == "m:kb:hide":
+        await hide_bottom_buttons(update, context)
+        return
+    if data == "m:kb:show":
+        await show_bottom_buttons(update, context)
+        return
     if data == "m:news":
         clear_awaiting(context)
         await query.edit_message_text(
@@ -687,6 +747,8 @@ async def on_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await show_plan_panel(update, context)
     elif text == BTN_MENU:
         await show_main_menu(update, context)
+    elif text == BTN_HIDE:
+        await hide_bottom_buttons(update, context)
     elif text == BTN_HELP:
         from bot.handlers import help_text
 

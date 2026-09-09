@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from bot.keyboards import (
+    BTN_HIDE,
     BTN_NEW_ONLY,
     BTN_NEWS,
     BTN_PLAN,
@@ -8,16 +9,19 @@ from bot.keyboards import (
     channel_presets_keyboard,
     digest_mode_keyboard,
     digest_page_keyboard,
+    hide_reply_keyboard,
     main_inline_keyboard,
     main_reply_keyboard,
     plan_keyboard,
     schedule_keyboard,
+    show_reply_keyboard_markup,
     sources_keyboard,
     topics_keyboard,
 )
 from bot.models import Source
 from bot.plans import set_monetization_enabled
 from datetime import datetime, timezone
+from telegram import ReplyKeyboardRemove
 
 
 def test_main_keyboards():
@@ -27,6 +31,8 @@ def test_main_keyboards():
     assert BTN_NEW_ONLY in labels
     assert BTN_SCHEDULE in labels
     assert BTN_PLAN in labels
+    assert BTN_HIDE in labels
+    assert reply.is_persistent is False
     assert "Сброс курсора" not in labels
     inline = main_inline_keyboard()
     assert any(btn.callback_data == "m:news" for row in inline.inline_keyboard for btn in row)
@@ -34,8 +40,17 @@ def test_main_keyboards():
         btn.callback_data == "m:schedule" for row in inline.inline_keyboard for btn in row
     )
     assert any(btn.callback_data == "m:plan" for row in inline.inline_keyboard for btn in row)
+    assert any(btn.callback_data == "m:kb:hide" for row in inline.inline_keyboard for btn in row)
     assert not any(
         btn.callback_data == "m:reset" for row in inline.inline_keyboard for btn in row
+    )
+
+
+def test_hide_and_show_reply_keyboard_helpers():
+    assert isinstance(hide_reply_keyboard(), ReplyKeyboardRemove)
+    show = show_reply_keyboard_markup()
+    assert any(
+        btn.callback_data == "m:kb:show" for row in show.inline_keyboard for btn in row
     )
 
 
