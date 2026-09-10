@@ -504,15 +504,28 @@ class Database:
         if not -12 * 60 <= new_tz <= 14 * 60:
             raise ValueError("Смещение вне диапазона UTC−12…UTC+14")
         with self.connect() as conn:
-            conn.execute(
-                """
-                UPDATE users
-                SET schedule_enabled = ?, schedule_hour = ?, schedule_minute = ?,
-                    tz_offset_minutes = ?
-                WHERE user_id = ?
-                """,
-                (1 if new_enabled else 0, new_hour, new_minute, new_tz, user_id),
-            )
+            if new_enabled and not current.enabled:
+                # Re-enabling clears today's sent marker so a missed auto-send
+                # can fire again after the scheduled time.
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET schedule_enabled = ?, schedule_hour = ?, schedule_minute = ?,
+                        tz_offset_minutes = ?, last_schedule_date = NULL
+                    WHERE user_id = ?
+                    """,
+                    (1, new_hour, new_minute, new_tz, user_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET schedule_enabled = ?, schedule_hour = ?, schedule_minute = ?,
+                        tz_offset_minutes = ?
+                    WHERE user_id = ?
+                    """,
+                    (1 if new_enabled else 0, new_hour, new_minute, new_tz, user_id),
+                )
         return self.get_schedule(user_id)
 
     def mark_schedule_sent(self, user_id: int, local_date: str) -> None:

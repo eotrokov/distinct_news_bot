@@ -89,6 +89,12 @@ def test_db_schedule_roundtrip(tmp_path):
     db.mark_schedule_sent(user_id, "2026-08-25")
     assert db.list_due_schedules(now) == []
 
+    # Re-enable after a failed/missed day clears the sent marker.
+    db.set_schedule(user_id, enabled=False)
+    db.set_schedule(user_id, enabled=True)
+    assert db.get_schedule(user_id).last_schedule_date is None
+    assert len(db.list_due_schedules(now)) == 1
+
     text = format_schedule_status(db.get_schedule(user_id))
     assert "09:55" in text
     assert "UTC+3" in text

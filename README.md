@@ -129,8 +129,8 @@ sources = merge_sources(user)          # builtin RSS + свои
 - SEO-релевантность по `SEO_RELEVANCE_KEYWORDS` из `seo_prompt`.
 
 **Дедуп** (`dedupe`)
-- Точный URL, похожесть заголовков (SequenceMatcher ≥0.86), Jaccard токенов.
-- Кросс-язык RU↔EN через канонизацию (`гугл`↔`google`, `линкбилдинг`↔`linkbuilding`, …).
+- Точный URL, похожесть заголовков/текста (SequenceMatcher ≥0.86), Jaccard токенов по смыслу (без стоп-слов вроде «как/для/seo»).
+- Кросс-язык RU↔EN: перевод известных синонимов (`гугл`↔`google`, `программатик`↔`programmatic`, …), затем сравнение **переведённого текста**. Совпадение только по тематическим тегам (`seo`+`guide`, `google`+`serp`) дублем не считается — нужны общие отличительные якоря истории и высокий Jaccard/sequence overlap.
 - Merge дублей: больше реакций/просмотров, объединение urls, более длинный title/summary, более ранняя дата.
 - «Уже видели»: SHA256 нормализованного title (fallback — url); очистка старше 30 дней.
 - `/reset` сбрасывает seen и `last_digest_at`, чтобы «Только новое» снова показало материалы.
@@ -180,7 +180,8 @@ sources = merge_sources(user)          # builtin RSS + свои
 
 - Repeating job каждые **60 с** (первый тик через ~20 с).
 - `list_due_schedules`: локальное время ≥ заданного и `last_schedule_date != today`.
-- Перед отправкой — `mark_schedule_sent` (антидубль).
+- Антидубль: in-flight set на время сбора; `mark_schedule_sent` **после** успешной отправки (или осознанного skip по квоте/ошибке сбора). Сбой Telegram — день не сгорает, тик ретраит.
+- HTML parse error → fallback на plain text.
 - Окно: вчерашний день в TZ пользователя; preface «Авто-сводка за YYYY-MM-DD».
 - Trigger в логе: `scheduled`. Без JobQueue авто-сводок нет (warning в лог).
 
