@@ -131,6 +131,59 @@ def test_are_near_duplicates_rejects_unrelated_ru_en():
     assert not are_near_duplicates(ru, en)
 
 
+def test_are_near_duplicates_rejects_shared_seo_tags_only():
+    """Same topic tags (google/serp/seo) must not glue unrelated stories."""
+    overviews = _item(
+        "Google запустил AI Overviews в поиске",
+        "https://a.example/overviews",
+        summary="Новые AI Overviews появились в выдаче Google.",
+    )
+    outage = _item(
+        "Google подтвердил сбой индексации",
+        "https://b.example/outage",
+        summary="Страницы выпадали из выдачи Google несколько часов.",
+    )
+    assert not are_near_duplicates(overviews, outage)
+
+    semrush = _item(
+        "SEMrush выпустил SEO-гайд по контенту",
+        "https://a.example/semrush",
+        summary="Как писать контент для SEO по чек-листу SEMrush.",
+    )
+    ahrefs = _item(
+        "Ahrefs выпустил гайд по ссылкам",
+        "https://b.example/ahrefs",
+        summary="Как строить ссылки для SEO по методике Ahrefs.",
+    )
+    assert not are_near_duplicates(semrush, ahrefs)
+
+
+def test_deduplicate_keeps_distinct_seo_stories():
+    items = [
+        _item(
+            "Google подтвердил core update",
+            "https://1.example/core",
+            summary="Алгоритм поиска Google обновился.",
+        ),
+        _item(
+            "Ahrefs backlink index update",
+            "https://2.example/ahrefs",
+            summary="Ahrefs updated backlink index and Domain Rating.",
+        ),
+        _item(
+            "ChatGPT для SEO контента",
+            "https://3.example/ai",
+            summary="Нейросеть помогает писать SEO контент.",
+        ),
+        _item(
+            "Programmatic pages scaling",
+            "https://4.example/pp",
+            summary="Guide to programmatic SEO pages.",
+        ),
+    ]
+    assert len(deduplicate(items)) == 4
+
+
 def test_parse_add_args():
     t, ident, title = parse_add_args(["tg", "bbcnews"])
     assert t == "telegram"
