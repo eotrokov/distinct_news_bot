@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import timedelta
 from typing import Any
 
 from telegram.constants import ParseMode
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from bot.db import Database
@@ -16,6 +18,48 @@ logger = logging.getLogger(__name__)
 
 # Check every minute so :55 schedules fire close to the requested time.
 SCHEDULE_JOB_INTERVAL_SECONDS = 60
+
+# Prevent overlapping ticks from double-sending while a collect is in flight.
+_IN_FLIGHT: set[int] = set()
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str) -> str:
+    return _HTML_TAG_RE.sub("", text)
+
+
+async def _send_digest_message(
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    chat_id: int,
+    text: str,
+    reply_markup: Any,
+) -> None:
+    """Send digest HTML; fall back to plain text if Telegram rejects the markup."""
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+            reply_markup=reply_markup,
+        )
+    except BadRequest as exc:
+        msg = str(exc).lower()
+        if "parse" not in msg and "entity" not in msg:
+            raise
+        logger.warning(
+            "HTML parse failed for chat %s (%s) — retrying as plain text",
+            chat_id,
+            exc,
+        )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=_strip_html(text),
+            disable_web_page_preview=True,
+            reply_markup=reply_markup,
+        )
 
 
 async def deliver_digest_to_user(
@@ -33,6 +77,8 @@ async def deliver_digest_to_user(
 
     ``user_id`` is the workspace id (private chat.id == user.id, or group chat.id).
     Returns True if a message was sent.
+    Returns False if skipped (quota) or collect failed after notifying the user.
+    Raises on Telegram send failure so the caller can retry without marking sent.
     """
     digest: DigestService = context.application.bot_data["digest"]
     db: Database = context.application.bot_data["db"]
@@ -77,20 +123,17 @@ async def deliver_digest_to_user(
     except Exception:  # noqa: BLE001
         logger.exception("Failed to persist scheduled digest session for %s", user_id)
 
-    digest.mark_digest_delivered(user_id, items, trigger="scheduled")
     markup = back_home_keyboard()
     if len(pages) > 1:
         from bot.keyboards import digest_page_keyboard
 
         markup = digest_page_keyboard(0, len(pages))
 
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=text,
-        parse_mode=ParseMode.HTML,
-        disable_web_page_preview=True,
-        reply_markup=markup,
+    await _send_digest_message(
+        context, chat_id=user_id, text=text, reply_markup=markup
     )
+    # Only mark seen / log after Telegram accepted the message.
+    digest.mark_digest_delivered(user_id, items, trigger="scheduled")
     return True
 
 
@@ -109,27 +152,53 @@ async def _send_scheduled_digest(
 ) -> None:
     db: Database = context.application.bot_data["db"]
     user_id = schedule.user_id
+    if user_id in _IN_FLIGHT:
+        logger.info("Skip schedule for %s — already in flight", user_id)
+        return
+
     local_date = schedule.local_date_str()
-    # Mark first to avoid double-send on overlapping ticks if send is slow.
-    db.mark_schedule_sent(user_id, local_date)
     since, until = schedule.previous_local_day_bounds()
     yday = schedule.local_now().date() - timedelta(days=1)
     preface = (
         f"📅 Авто-сводка за {yday.isoformat()} · "
         f"{schedule.format_time()} ({schedule.format_offset()})"
     )
+
+    _IN_FLIGHT.add(user_id)
     try:
-        await deliver_digest_to_user(
-            context,
-            user_id,
-            days=1,
-            only_unseen=False,
-            preface=preface,
-            since=since,
-            until=until,
-        )
-    except Exception:  # noqa: BLE001
-        logger.exception("Failed scheduled digest delivery for user %s", user_id)
+        try:
+            sent = await deliver_digest_to_user(
+                context,
+                user_id,
+                days=1,
+                only_unseen=False,
+                preface=preface,
+                since=since,
+                until=until,
+            )
+        except Exception:  # noqa: BLE001
+            # Do NOT mark sent — next minute tick can retry.
+            logger.exception(
+                "Failed scheduled digest delivery for user %s — will retry",
+                user_id,
+            )
+            return
+
+        # Mark after success OR intentional skip (quota / collect notify),
+        # so we neither miss the day on a flaky send nor spam every minute.
+        db.mark_schedule_sent(user_id, local_date)
+        if sent:
+            logger.info(
+                "Scheduled digest delivered to %s for %s", user_id, local_date
+            )
+        else:
+            logger.info(
+                "Scheduled digest marked done for %s for %s (skipped)",
+                user_id,
+                local_date,
+            )
+    finally:
+        _IN_FLIGHT.discard(user_id)
 
 
 def setup_schedule_jobs(app: Any) -> None:
@@ -144,4 +213,8 @@ def setup_schedule_jobs(app: Any) -> None:
         interval=SCHEDULE_JOB_INTERVAL_SECONDS,
         first=20,
         name="scheduled_digest_tick",
+    )
+    logging.getLogger(__name__).info(
+        "Scheduled digest job registered (every %ss)",
+        SCHEDULE_JOB_INTERVAL_SECONDS,
     )

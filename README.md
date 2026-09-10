@@ -180,7 +180,8 @@ sources = merge_sources(user)          # builtin RSS + свои
 
 - Repeating job каждые **60 с** (первый тик через ~20 с).
 - `list_due_schedules`: локальное время ≥ заданного и `last_schedule_date != today`.
-- Перед отправкой — `mark_schedule_sent` (антидубль).
+- Антидубль: in-flight set на время сбора; `mark_schedule_sent` **после** успешной отправки (или осознанного skip по квоте/ошибке сбора). Сбой Telegram — день не сгорает, тик ретраит.
+- HTML parse error → fallback на plain text.
 - Окно: вчерашний день в TZ пользователя; preface «Авто-сводка за YYYY-MM-DD».
 - Trigger в логе: `scheduled`. Без JobQueue авто-сводок нет (warning в лог).
 
