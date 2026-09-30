@@ -5,14 +5,18 @@
 #   DEPLOY_HOST
 #   DEPLOY_USER
 #
+# Auth (one of):
+#   DEPLOY_SSH_KEY       path to private key
+#   DEPLOY_SSH_PASSWORD  password for sshpass (used when no key, or as fallback)
+#
 # Optional:
 #   DEPLOY_PATH       default: /opt/distinct-news-bot
-#   DEPLOY_SSH_KEY    path to private key
 #   DEPLOY_SSH_PORT   default: 22
 #   DEPLOY_BRANCH     default: main
 #
 # Example:
 #   DEPLOY_HOST=1.2.3.4 DEPLOY_USER=ubuntu ./deploy/deploy.sh
+#   DEPLOY_HOST=1.2.3.4 DEPLOY_USER=root DEPLOY_SSH_PASSWORD='...' ./deploy/deploy.sh
 
 set -euo pipefail
 
@@ -25,14 +29,46 @@ DEPLOY_PATH="${DEPLOY_PATH:-/opt/distinct-news-bot}"
 DEPLOY_SSH_PORT="${DEPLOY_SSH_PORT:-22}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 
-SSH_OPTS=(-p "$DEPLOY_SSH_PORT" -o StrictHostKeyChecking=accept-new)
+SSH_OPTS=(-p "$DEPLOY_SSH_PORT" -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey,password)
 if [[ -n "${DEPLOY_SSH_KEY:-}" ]]; then
-  SSH_OPTS+=(-i "$DEPLOY_SSH_KEY")
+  SSH_OPTS+=(-i "$DEPLOY_SSH_KEY" -o IdentitiesOnly=yes)
+fi
+
+USE_SSHPASS=0
+if [[ -n "${DEPLOY_SSH_PASSWORD:-}" ]]; then
+  if ! command -v sshpass >/dev/null 2>&1; then
+    echo "DEPLOY_SSH_PASSWORD is set but sshpass is not installed" >&2
+    exit 1
+  fi
+  export SSHPASS="$DEPLOY_SSH_PASSWORD"
+  USE_SSHPASS=1
+fi
+
+if [[ -z "${DEPLOY_SSH_KEY:-}" && "$USE_SSHPASS" -ne 1 ]]; then
+  echo "Set DEPLOY_SSH_KEY (path) or DEPLOY_SSH_PASSWORD" >&2
+  exit 1
 fi
 
 REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
-ssh_cmd() { ssh "${SSH_OPTS[@]}" "$REMOTE" "$@"; }
-rsync_ssh() { printf 'ssh'; printf ' %q' "${SSH_OPTS[@]}"; }
+
+ssh_cmd() {
+  if [[ "$USE_SSHPASS" -eq 1 ]]; then
+    sshpass -e ssh "${SSH_OPTS[@]}" "$REMOTE" "$@"
+  else
+    ssh "${SSH_OPTS[@]}" "$REMOTE" "$@"
+  fi
+}
+
+rsync_ssh() {
+  if [[ "$USE_SSHPASS" -eq 1 ]]; then
+    # rsync -e expects a single command string.
+    printf 'sshpass -e ssh'
+    printf ' %q' "${SSH_OPTS[@]}"
+  else
+    printf 'ssh'
+    printf ' %q' "${SSH_OPTS[@]}"
+  fi
+}
 
 echo "==> Ensuring remote directories and rsync/docker exist"
 ssh_cmd "mkdir -p $(printf %q "$DEPLOY_PATH")/data; \
