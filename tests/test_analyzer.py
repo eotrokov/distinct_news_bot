@@ -172,8 +172,8 @@ def test_process_keeps_relevant_orphans_in_other_bucket():
     cats = result["categories"]
     assert result["stats"]["final_count"] == 2
     assert "🔍 Google и Поиск" in cats
-    assert "📌 SEO и маркетинг" in cats
-    assert cats["📌 SEO и маркетинг"][0].title.startswith("SEO новости")
+    assert "📌 Другое" in cats
+    assert cats["📌 Другое"][0].title.startswith("SEO новости")
 
 
 def test_process_groups_by_seo_categories_sorted_by_reactions():
