@@ -8,7 +8,11 @@ from typing import Any
 
 from bot.dedupe import are_near_duplicates
 from bot.models import NewsItem
-from bot.seo_prompt import SEO_CATEGORIES, SEO_RELEVANCE_KEYWORDS
+from bot.seo_prompt import (
+    SEO_CATEGORIES,
+    SEO_OTHER_CATEGORY,
+    SEO_RELEVANCE_KEYWORDS,
+)
 from bot.summarize import clean_and_summarize
 
 logger = logging.getLogger(__name__)
@@ -231,19 +235,21 @@ class NewsAnalyzer:
         return sorted(items, key=score, reverse=True)
 
     def categorize(self, items: list[NewsItem]) -> dict[str, list[NewsItem]]:
-        buckets: dict[str, list[NewsItem]] = {name: [] for name in SEO_CATEGORIES}
+        buckets: dict[str, list[NewsItem]] = {
+            name: [] for name in SEO_CATEGORIES
+        }
+        buckets[SEO_OTHER_CATEGORY] = []
         for item in items:
-            category = categorize_item(item)
-            if category is None:
-                # Relevant but no specific block — put under Google/Search as default
-                # only if it still looks search-related; else skip orphan.
-                continue
+            # Relevant orphans (e.g. bare "SEO"/"продвижение сайта") used to be
+            # dropped here — that looked like "бот не даёт новости из каналов".
+            category = categorize_item(item) or SEO_OTHER_CATEGORY
             buckets[category].append(item)
-        # Drop empty blocks; keep declared order.
+        # Drop empty blocks; keep declared order, catch-all last.
+        ordered = list(SEO_CATEGORIES) + [SEO_OTHER_CATEGORY]
         return {
-            name: self.sort_by_reactions(cat_items)
-            for name, cat_items in buckets.items()
-            if cat_items
+            name: self.sort_by_reactions(buckets[name])
+            for name in ordered
+            if buckets[name]
         }
 
     def process(
