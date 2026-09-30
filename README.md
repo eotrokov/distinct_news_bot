@@ -355,8 +355,10 @@ sudo bash deploy/setup-server.sh /opt/distinct-news-bot
 С вашей машины:
 
 ```bash
-export DEPLOY_HOST=your.server.ip
-export DEPLOY_USER=ubuntu
+export DEPLOY_HOST=157.228.155.21
+export DEPLOY_USER=root
+# auth: password OR key
+# export DEPLOY_SSH_PASSWORD='...'
 # export DEPLOY_SSH_KEY=~/.ssh/id_ed25519
 # export DEPLOY_PATH=/opt/distinct-news-bot
 
@@ -366,6 +368,8 @@ export DEPLOY_USER=ubuntu
 
 ./deploy/deploy.sh
 ```
+
+GitHub Actions (`CI and Deploy`) ходит на `157.228.155.21` как `root`. Нужен секрет репозитория **`DEPLOY_SSH_PASSWORD`** (или `DEPLOY_SSH_KEY`).
 
 Скрипт синхронизирует файлы в `/opt/distinct-news-bot`, собирает образ и перезапускает только этот compose-проект. Другие контейнеры не трогает.
 

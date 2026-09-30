@@ -30,33 +30,42 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     env:
-      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_HOST: "157.228.155.21"
+      DEPLOY_USER: "root"
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+      # Prefer password for this VPS. Optional key still supported if password is unset.
+      DEPLOY_SSH_PASSWORD: ${{ secrets.DEPLOY_SSH_PASSWORD }}
       DEPLOY_SSH_KEY_RAW: ${{ secrets.DEPLOY_SSH_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate required deploy secrets
+      - name: Validate required deploy auth
         run: |
-          test -n "${DEPLOY_HOST}" || { echo "DEPLOY_HOST secret is required"; exit 1; }
-          test -n "${DEPLOY_USER}" || { echo "DEPLOY_USER secret is required"; exit 1; }
-          test -n "${DEPLOY_SSH_KEY_RAW}" || { echo "DEPLOY_SSH_KEY secret is required"; exit 1; }
+          if [ -z "${DEPLOY_SSH_PASSWORD}" ] && [ -z "${DEPLOY_SSH_KEY_RAW}" ]; then
+            echo "::error::Add repository secret DEPLOY_SSH_PASSWORD (root password for 157.228.155.21), or DEPLOY_SSH_KEY"
+            exit 1
+          fi
+          # Stale DEPLOY_SSH_KEY alone is not enough for the new host — require password when present path is key-only.
+          if [ -z "${DEPLOY_SSH_PASSWORD}" ]; then
+            echo "::warning::DEPLOY_SSH_PASSWORD is empty; falling back to DEPLOY_SSH_KEY (must be authorized on 157.228.155.21)"
+          fi
+
+      - name: Install sshpass
+        if: env.DEPLOY_SSH_PASSWORD != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
 
       - name: Prepare SSH key
+        if: env.DEPLOY_SSH_PASSWORD == '' && env.DEPLOY_SSH_KEY_RAW != ''
         run: |
           mkdir -p ~/.ssh
-          # Normalize multiline key: strip wrapping quotes, CRLF → LF, ensure trailing newline.
           printf '%s' "$DEPLOY_SSH_KEY_RAW" \
             | sed -e 's/\r$//' -e "s/^['\"]//" -e "s/['\"]$//" \
             > ~/.ssh/deploy_key
-          # If the secret was stored with literal \n, expand them.
           if ! grep -q 'BEGIN .*PRIVATE KEY' ~/.ssh/deploy_key; then
             printf '%s' "$DEPLOY_SSH_KEY_RAW" | sed 's/\\n/\n/g' | sed -e 's/\r$//' > ~/.ssh/deploy_key
           fi
-          # Ensure file ends with a newline (OpenSSH requires it).
           [ -n "$(tail -c1 ~/.ssh/deploy_key)" ] && printf '\n' >> ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           if ! grep -q 'BEGIN .*PRIVATE KEY' ~/.ssh/deploy_key; then
@@ -67,5 +76,11 @@ jobs:
 
       - name: Run remote deploy
         run: |
-          export DEPLOY_SSH_KEY=~/.ssh/deploy_key
+          if [ -n "${DEPLOY_SSH_PASSWORD}" ]; then
+            echo "Using password auth for ${DEPLOY_USER}@${DEPLOY_HOST}"
+            unset DEPLOY_SSH_KEY || true
+          else
+            export DEPLOY_SSH_KEY=~/.ssh/deploy_key
+            unset DEPLOY_SSH_PASSWORD || true
+          fi
           ./deploy/deploy.sh

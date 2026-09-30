@@ -7,19 +7,26 @@ jobs:
   logs:
     runs-on: ubuntu-latest
     env:
-      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_HOST: "157.228.155.21"
+      DEPLOY_USER: "root"
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
       DEPLOY_SSH_KEY_RAW: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_SSH_PASSWORD: ${{ secrets.DEPLOY_SSH_PASSWORD }}
     steps:
       - name: Validate secrets
         run: |
-          test -n "${DEPLOY_HOST}" || { echo "DEPLOY_HOST required"; exit 1; }
-          test -n "${DEPLOY_USER}" || { echo "DEPLOY_USER required"; exit 1; }
-          test -n "${DEPLOY_SSH_KEY_RAW}" || { echo "DEPLOY_SSH_KEY required"; exit 1; }
+          if [ -z "${DEPLOY_SSH_PASSWORD}" ] && [ -z "${DEPLOY_SSH_KEY_RAW}" ]; then
+            echo "Set DEPLOY_SSH_PASSWORD or DEPLOY_SSH_KEY" >&2
+            exit 1
+          fi
+
+      - name: Install sshpass
+        if: env.DEPLOY_SSH_PASSWORD != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
 
       - name: Prepare SSH key
+        if: env.DEPLOY_SSH_PASSWORD == '' && env.DEPLOY_SSH_KEY_RAW != ''
         run: |
           mkdir -p ~/.ssh
           printf '%s' "$DEPLOY_SSH_KEY_RAW" \
@@ -38,7 +45,14 @@ jobs:
         run: |
           DEPLOY_PATH="${DEPLOY_PATH:-/opt/distinct-news-bot}"
           DEPLOY_SSH_PORT="${DEPLOY_SSH_PORT:-22}"
-          SSH=(ssh -p "$DEPLOY_SSH_PORT" -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new)
+          SSH_OPTS=(-p "$DEPLOY_SSH_PORT" -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey,password)
+          if [ -n "${DEPLOY_SSH_PASSWORD}" ]; then
+            export SSHPASS="$DEPLOY_SSH_PASSWORD"
+            SSH=(sshpass -e ssh "${SSH_OPTS[@]}")
+          else
+            SSH_OPTS+=(-i ~/.ssh/deploy_key -o IdentitiesOnly=yes)
+            SSH=(ssh "${SSH_OPTS[@]}")
+          fi
           REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
           "${SSH[@]}" "$REMOTE" "cd $(printf %q "$DEPLOY_PATH") && \
             echo '=== compose ps ===' && docker compose ps && \
