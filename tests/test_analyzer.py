@@ -151,6 +151,31 @@ def test_deduplicate_merges_ru_en_programmatic_story():
     assert len(out[0].urls) == 2
 
 
+def test_process_keeps_relevant_orphans_in_other_bucket():
+    """Bare SEO posts must not vanish just because no thematic block matched."""
+    analyzer = NewsAnalyzer()
+    orphan = _item(
+        "SEO новости недели",
+        "Собрали главные SEO-новости недели для специалистов по продвижению сайтов",
+        url="https://t.me/ch/1",
+        reactions=8,
+        body="Собрали главные SEO-новости недели для специалистов по продвижению сайтов",
+    )
+    google = _item(
+        "Google подтвердил сбой в выдаче поиска",
+        "Google подтвердил сбой индексации, страницы выпадали из выдачи на 6 часов.",
+        url="https://t.me/ch/2",
+        reactions=50,
+        body="Google подтвердил сбой индексации, страницы выпадали из выдачи на 6 часов.",
+    )
+    result = analyzer.process([orphan, google], period=1, max_sentences=2)
+    cats = result["categories"]
+    assert result["stats"]["final_count"] == 2
+    assert "🔍 Google и Поиск" in cats
+    assert "📌 Другое" in cats
+    assert cats["📌 Другое"][0].title.startswith("SEO новости")
+
+
 def test_process_groups_by_seo_categories_sorted_by_reactions():
     analyzer = NewsAnalyzer()
     low = _item(

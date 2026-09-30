@@ -130,6 +130,10 @@ SEO_CATEGORIES: dict[str, list[str]] = {
     ],
 }
 
+# Catch-all for posts that pass SEO relevance but match no thematic block.
+# Without this bucket, relevant Telegram posts are silently dropped from digests.
+SEO_OTHER_CATEGORY = "📌 Другое"
+
 # Broad relevance: post must match at least one token to stay in the digest.
 SEO_RELEVANCE_KEYWORDS: list[str] = sorted(
     {

@@ -71,14 +71,23 @@ def _days_word(days: int) -> str:
     return "дней"
 
 
+def _source_link_label(item: NewsItem) -> str:
+    """Prefer channel/feed title so Telegram sources are visible in the digest."""
+    name = (item.source_name or "").strip()
+    if name:
+        return name
+    return "источник"
+
+
 def _format_item_links(item: NewsItem) -> str:
     urls = item_urls(item)
     if not urls:
         return ""
+    label = escape(_source_link_label(item))
     if len(urls) == 1:
-        return f'<a href="{escape(urls[0], quote=True)}">источник</a>'
+        return f'<a href="{escape(urls[0], quote=True)}">{label}</a>'
     parts = [
-        f'<a href="{escape(url, quote=True)}">канал{idx}</a>'
+        f'<a href="{escape(url, quote=True)}">{label} #{idx}</a>'
         for idx, url in enumerate(urls, start=1)
     ]
     return ", ".join(parts)
@@ -394,6 +403,8 @@ def format_digest_result(
 
     if not flat:
         only_unseen = bool(stats.get("only_unseen"))
+        total = int(stats.get("total_processed") or 0)
+        filtered = int(stats.get("filtered_out") or 0)
         if only_unseen:
             text = (
                 f"За последние {days_used} {_days_word(days_used)} "
@@ -401,12 +412,26 @@ def format_digest_result(
                 "Нажмите «Сводка» для топа за период или /reset, "
                 "чтобы снова показывать просмотренное."
             )
-        else:
-            text = f"За последние {days_used} {_days_word(days_used)} новых постов нет."
-        if topics:
+        elif topics:
             text = (
                 f"За последние {days_used} {_days_word(days_used)} нет постов "
                 f"по темам ({', '.join(topics)})."
+            )
+        elif total > 0:
+            # Posts were fetched (often from Telegram) but SEO/noise filters
+            # removed everything — say so instead of "новых постов нет".
+            text = (
+                f"За последние {days_used} {_days_word(days_used)} "
+                f"нашли {total} постов, но в SEO-дайджест ничего не прошло "
+                f"(отсеяно как реклама/оффтоп: {filtered}).\n"
+                "Бот показывает только новости про SEO и digital-маркетинг. "
+                "Добавьте SEO-каналы (пресет в /sources) или расширьте окно: "
+                "/news 7"
+            )
+        else:
+            text = (
+                f"За последние {days_used} {_days_word(days_used)} "
+                "новых постов нет."
             )
         if errors:
             text += "\n\nПроблемы с источниками:\n" + "\n".join(

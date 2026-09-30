@@ -228,6 +228,23 @@ def test_format_digest_empty():
     assert "timeout" in chunks[0]
 
 
+def test_format_digest_filtered_all_explains_seo_filter():
+    analysis = {
+        "categories": {},
+        "stats": {
+            "total_processed": 12,
+            "final_count": 0,
+            "filtered_out": 12,
+            "deduped_merged": 0,
+            "only_unseen": False,
+        },
+    }
+    pages = format_digest([], [], days=3, analysis=analysis)
+    assert "нашли 12 постов" in pages[0]
+    assert "отсеяно" in pages[0]
+    assert "SEO" in pages[0]
+
+
 def test_format_digest_with_topics():
     chunks = format_digest([], [], ["ai"], days=3)
     assert "ai" in chunks[0]
@@ -253,7 +270,8 @@ def test_format_digest_excerpt_and_reactions():
     text = chunks[0]
     assert "SEO-дайджест за 7 дней (по реакциям)" in text
     assert "<b>🔍 Google и Поиск</b>" in text
-    assert "источник" in text
+    # Link label is the Telegram/RSS source name, not a generic «источник».
+    assert ">SEO</a>" in text
     assert "https://example.com/post/1" in text
     assert "Google подтвердил сбой" in text
     # Engagement counters are not shown in the SEO digest item body.
