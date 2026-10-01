@@ -24,14 +24,15 @@ _NOISE_REGEXES = [
     for p in (
         r"\butm_[a-z0-9]+=",
         r"\bclid=",
-        r"купить",
+        # Bare "купить"/"реклама"/"партнёрск"/"ваканси" are too broad for RU SEO:
+        # they match product UI ("кнопка Купить"), affiliate-marketing articles,
+        # industry job-market news, and "поисковая реклама". Keep promo phrases.
         r"скидк",
         r"акци[яи]",
         r"промокод",
         r"бесплатн\w*\s+подписк",
-        r"реклама",
         r"erid=",
-        r"партн[её]рск",
+        r"партн[её]рск\w*\s+материал",
         r"заказать\s+сейчас",
         r"только\s+сегодня",
         r"успей\s+купить",
@@ -44,8 +45,9 @@ _NOISE_REGEXES = [
         r"прода(м|жа|ём|ем)\s+ссылк",
         r"нативн\w*\s+интеграц",
         r"ищу\s+(seo|сео|специалист|менеджер|линкбилдер)",
-        r"ваканси",
+        r"(?:открыт[ао]|требуется|ищу)\s+ваканси",
         r"требуется\s+(seo|сео|специалист)",
+        r"резюме\s+в\s+личк",
         r"запись\s+на\s+курс",
         r"прода(жа|ём|ем)\s+курс",
         r"наш\s+курс",
@@ -57,6 +59,9 @@ _NOISE_REGEXES = [
         r"запись\s+на\s+вебинар",
         r"успейте\s+на\s+вебинар",
         r"бесплатн\w*\s+вебинар\s+для",
+        # Labeled ads (Telegram marking), not "поисковая реклама".
+        r"(?:^|[\n.])\s*реклама\b",
+        r"#реклама\b",
     )
 ]
 
@@ -78,7 +83,6 @@ STOP_PHRASES = [
     "ссылка в био",
     "переходи по ссылке",
     "переходите по ссылке",
-    "реклама",
     "промокод",
     "успей купить",
     "только сегодня",
@@ -108,14 +112,14 @@ BLOCK_WORDS = [
     # Do NOT block bare "вебинар": RU SEO channels publish webinar recordings
     # as primary educational content (Shakin, burzhunet, …). Promo signup
     # wording is caught by _NOISE_REGEXES instead.
+    # Do NOT block bare "реклама"/"вакансия": matches "поисковая реклама"
+    # and industry job-market news; hiring CTAs use regexes above.
     "подписывайтесь",
     "подпишись",
     "лайкните",
     "репост",
-    "реклама",
     "erid",
     "coupon",
-    "вакансия",
     "инфобиз",
 ]
 

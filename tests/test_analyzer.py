@@ -173,6 +173,60 @@ def test_filter_noise_keeps_russian_webinar_recordings():
     assert "Триплетные" in kept[0].title
 
 
+def test_filter_noise_keeps_ru_seo_articles_not_promo_wording():
+    """Affiliate / shopping / job-market SEO news must not die on broad substrings."""
+    analyzer = NewsAnalyzer()
+    keepers = [
+        _item(
+            "7 стратегий партнёрского маркетинга в эпоху AI-поиска",
+            "Статья Kinsta о том, как адаптировать партнёрский сайт к AI-поиску",
+            body="Статья Kinsta о том, как адаптировать партнёрский сайт к AI-поиску "
+            "и сохранить органический трафик.",
+        ),
+        _item(
+            "Google тестирует кнопку Купить в Flipkart",
+            "В тестировании видят кнопку «Купить» на товарах Flipkart в поиске Google",
+            body="В тестировании видят кнопку «Купить» на товарах Flipkart в поиске Google.",
+        ),
+        _item(
+            "Посмотрите на эти вакансии: Anthropic SEO Lead",
+            "Росс Симондс отмечает рост спроса на SEO/GEO специалистов в AI-компаниях",
+            body="Росс Симондс отмечает рост спроса на SEO/GEO специалистов в AI-компаниях.",
+        ),
+        _item(
+            "Как поисковая реклама влияет на органическую выдачу",
+            "Разбираем каннибализацию между SEO и контекстной рекламой в Google",
+            body="Разбираем каннибализацию между SEO и контекстной рекламой в Google.",
+        ),
+    ]
+    droppers = [
+        _item(
+            "Партнёрский материал от сервиса ссылок",
+            "Партнёрский материал: купите размещение со скидкой только сегодня",
+            body="Партнёрский материал: купите размещение со скидкой только сегодня",
+        ),
+        _item(
+            "Реклама\nPBN ссылки со скидкой",
+            "Реклама. Скидка на гостевые посты только сегодня",
+            body="Реклама. Скидка на гостевые посты только сегодня",
+        ),
+        _item(
+            "Ищу SEO специалиста в агентство",
+            "Резюме в личку, зарплата по результатам",
+            body="Резюме в личку, зарплата по результатам собеседования",
+        ),
+    ]
+    kept = analyzer.filter_noise(keepers + droppers)
+    kept_titles = " ".join(i.title for i in kept)
+    assert "партнёрского маркетинга" in kept_titles
+    assert "Купить в Flipkart" in kept_titles
+    assert "Anthropic" in kept_titles
+    assert "поисковая реклама" in kept_titles
+    assert "Партнёрский материал" not in kept_titles
+    assert "PBN ссылки" not in kept_titles
+    assert "Ищу SEO" not in kept_titles
+
+
 def test_deduplicate_prefers_telegram_over_rss_on_tie():
     """Builtin EN RSS is fetched first; on equal reactions keep the TG post."""
     analyzer = NewsAnalyzer()
