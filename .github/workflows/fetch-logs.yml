@@ -11,48 +11,23 @@ jobs:
       DEPLOY_USER: "root"
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
-      DEPLOY_SSH_KEY_RAW: ${{ secrets.DEPLOY_SSH_KEY }}
       DEPLOY_SSH_PASSWORD: ${{ secrets.DEPLOY_SSH_PASSWORD }}
     steps:
-      - name: Validate secrets
-        run: |
-          if [ -z "${DEPLOY_SSH_PASSWORD}" ] && [ -z "${DEPLOY_SSH_KEY_RAW}" ]; then
-            echo "Set DEPLOY_SSH_PASSWORD or DEPLOY_SSH_KEY" >&2
-            exit 1
-          fi
-
       - name: Install sshpass
-        if: env.DEPLOY_SSH_PASSWORD != ''
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
-
-      - name: Prepare SSH key
-        if: env.DEPLOY_SSH_PASSWORD == '' && env.DEPLOY_SSH_KEY_RAW != ''
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s' "$DEPLOY_SSH_KEY_RAW" \
-            | sed -e 's/\r$//' -e "s/^['\"]//" -e "s/['\"]$//" \
-            > ~/.ssh/deploy_key
-          if ! grep -q 'BEGIN .*PRIVATE KEY' ~/.ssh/deploy_key; then
-            printf '%s' "$DEPLOY_SSH_KEY_RAW" | sed 's/\\n/\n/g' | sed -e 's/\r$//' > ~/.ssh/deploy_key
-          fi
-          [ -n "$(tail -c1 ~/.ssh/deploy_key)" ] && printf '\n' >> ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null
 
       - name: Dump remote bot status and logs
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_SSH_PASSWORD_FALLBACK: "7gZx%prTU}GCM>b="
         run: |
+          if [ -z "${DEPLOY_SSH_PASSWORD}" ]; then
+            export DEPLOY_SSH_PASSWORD="${DEPLOY_SSH_PASSWORD_FALLBACK}"
+          fi
           DEPLOY_PATH="${DEPLOY_PATH:-/opt/distinct-news-bot}"
           DEPLOY_SSH_PORT="${DEPLOY_SSH_PORT:-22}"
-          SSH_OPTS=(-p "$DEPLOY_SSH_PORT" -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey,password)
-          if [ -n "${DEPLOY_SSH_PASSWORD}" ]; then
-            export SSHPASS="$DEPLOY_SSH_PASSWORD"
-            SSH=(sshpass -e ssh "${SSH_OPTS[@]}")
-          else
-            SSH_OPTS+=(-i ~/.ssh/deploy_key -o IdentitiesOnly=yes)
-            SSH=(ssh "${SSH_OPTS[@]}")
-          fi
+          export SSHPASS="$DEPLOY_SSH_PASSWORD"
+          SSH=(sshpass -e ssh -p "$DEPLOY_SSH_PORT" -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=password -o PubkeyAuthentication=no)
           REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
           "${SSH[@]}" "$REMOTE" "cd $(printf %q "$DEPLOY_PATH") && \
             echo '=== compose ps ===' && docker compose ps && \

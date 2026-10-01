@@ -29,9 +29,11 @@ DEPLOY_PATH="${DEPLOY_PATH:-/opt/distinct-news-bot}"
 DEPLOY_SSH_PORT="${DEPLOY_SSH_PORT:-22}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 
-SSH_OPTS=(-p "$DEPLOY_SSH_PORT" -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey,password)
+SSH_OPTS=(-p "$DEPLOY_SSH_PORT" -o StrictHostKeyChecking=accept-new)
 if [[ -n "${DEPLOY_SSH_KEY:-}" ]]; then
-  SSH_OPTS+=(-i "$DEPLOY_SSH_KEY" -o IdentitiesOnly=yes)
+  SSH_OPTS+=(-i "$DEPLOY_SSH_KEY" -o IdentitiesOnly=yes -o PreferredAuthentications=publickey,password)
+else
+  SSH_OPTS+=(-o PreferredAuthentications=password -o PubkeyAuthentication=no)
 fi
 
 USE_SSHPASS=0

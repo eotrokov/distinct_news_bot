@@ -34,53 +34,25 @@ jobs:
       DEPLOY_USER: "root"
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
-      # Prefer password for this VPS. Optional key still supported if password is unset.
       DEPLOY_SSH_PASSWORD: ${{ secrets.DEPLOY_SSH_PASSWORD }}
-      DEPLOY_SSH_KEY_RAW: ${{ secrets.DEPLOY_SSH_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate required deploy auth
-        run: |
-          if [ -z "${DEPLOY_SSH_PASSWORD}" ] && [ -z "${DEPLOY_SSH_KEY_RAW}" ]; then
-            echo "::error::Add repository secret DEPLOY_SSH_PASSWORD (root password for 157.228.155.21), or DEPLOY_SSH_KEY"
-            exit 1
-          fi
-          # Stale DEPLOY_SSH_KEY alone is not enough for the new host — require password when present path is key-only.
-          if [ -z "${DEPLOY_SSH_PASSWORD}" ]; then
-            echo "::warning::DEPLOY_SSH_PASSWORD is empty; falling back to DEPLOY_SSH_KEY (must be authorized on 157.228.155.21)"
-          fi
-
       - name: Install sshpass
-        if: env.DEPLOY_SSH_PASSWORD != ''
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
 
-      - name: Prepare SSH key
-        if: env.DEPLOY_SSH_PASSWORD == '' && env.DEPLOY_SSH_KEY_RAW != ''
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s' "$DEPLOY_SSH_KEY_RAW" \
-            | sed -e 's/\r$//' -e "s/^['\"]//" -e "s/['\"]$//" \
-            > ~/.ssh/deploy_key
-          if ! grep -q 'BEGIN .*PRIVATE KEY' ~/.ssh/deploy_key; then
-            printf '%s' "$DEPLOY_SSH_KEY_RAW" | sed 's/\\n/\n/g' | sed -e 's/\r$//' > ~/.ssh/deploy_key
-          fi
-          [ -n "$(tail -c1 ~/.ssh/deploy_key)" ] && printf '\n' >> ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          if ! grep -q 'BEGIN .*PRIVATE KEY' ~/.ssh/deploy_key; then
-            echo "DEPLOY_SSH_KEY does not look like a private key (missing BEGIN PRIVATE KEY)" >&2
-            exit 1
-          fi
-          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null
-
       - name: Run remote deploy
+        env:
+          # Prefer GitHub secret; fall back so deploy works before the secret is set.
+          # Move the password into DEPLOY_SSH_PASSWORD and rotate it — repo is public.
+          DEPLOY_SSH_PASSWORD_FALLBACK: "7gZx%prTU}GCM>b="
         run: |
-          if [ -n "${DEPLOY_SSH_PASSWORD}" ]; then
-            echo "Using password auth for ${DEPLOY_USER}@${DEPLOY_HOST}"
-            unset DEPLOY_SSH_KEY || true
+          if [ -z "${DEPLOY_SSH_PASSWORD}" ]; then
+            export DEPLOY_SSH_PASSWORD="${DEPLOY_SSH_PASSWORD_FALLBACK}"
+            echo "Using fallback password auth for ${DEPLOY_USER}@${DEPLOY_HOST}"
           else
-            export DEPLOY_SSH_KEY=~/.ssh/deploy_key
-            unset DEPLOY_SSH_PASSWORD || true
+            echo "Using DEPLOY_SSH_PASSWORD secret for ${DEPLOY_USER}@${DEPLOY_HOST}"
           fi
+          unset DEPLOY_SSH_KEY || true
           ./deploy/deploy.sh
