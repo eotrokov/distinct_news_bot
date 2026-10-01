@@ -51,6 +51,12 @@ _NOISE_REGEXES = [
         r"наш\s+курс",
         r"интенсив\s+для",
         r"стоимость\s+размещен",
+        # Webinar *promo* only — bare "вебинар" / recordings stay (RU SEO norm).
+        r"регистрац\w*\s+на\s+вебинар",
+        r"запишитесь\s+на\s+вебинар",
+        r"запись\s+на\s+вебинар",
+        r"успейте\s+на\s+вебинар",
+        r"бесплатн\w*\s+вебинар\s+для",
     )
 ]
 
@@ -99,7 +105,9 @@ BLOCK_WORDS = [
     "конкурс",
     "промокод",
     "марафон",
-    "вебинар",
+    # Do NOT block bare "вебинар": RU SEO channels publish webinar recordings
+    # as primary educational content (Shakin, burzhunet, …). Promo signup
+    # wording is caught by _NOISE_REGEXES instead.
     "подписывайтесь",
     "подпишись",
     "лайкните",
@@ -189,10 +197,19 @@ class NewsAnalyzer:
 
     def _merge_items(self, primary: NewsItem, secondary: NewsItem) -> NewsItem:
         # Prefer the variant with more reactions (then views), per SEO digest rules.
-        if (int(secondary.reactions or 0), int(secondary.views or 0)) > (
+        # On a tie, prefer Telegram over RSS so user RU channels are not
+        # overwritten by builtin English blogs that were fetched first.
+        sec_score = (
+            int(secondary.reactions or 0),
+            int(secondary.views or 0),
+            1 if secondary.source_type == "telegram" else 0,
+        )
+        pri_score = (
             int(primary.reactions or 0),
             int(primary.views or 0),
-        ):
+            1 if primary.source_type == "telegram" else 0,
+        )
+        if sec_score > pri_score:
             primary, secondary = secondary, primary
 
         urls = item_urls(primary)

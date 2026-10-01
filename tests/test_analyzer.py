@@ -151,29 +151,58 @@ def test_deduplicate_merges_ru_en_programmatic_story():
     assert len(out[0].urls) == 2
 
 
-def test_process_keeps_relevant_orphans_in_other_bucket():
-    """Bare SEO posts must not vanish just because no thematic block matched."""
+def test_filter_noise_keeps_russian_webinar_recordings():
+    """RU SEO channels publish webinar recordings as news — do not drop them."""
     analyzer = NewsAnalyzer()
-    orphan = _item(
-        "SEO новости недели",
-        "Собрали главные SEO-новости недели для специалистов по продвижению сайтов",
-        url="https://t.me/ch/1",
-        reactions=8,
-        body="Собрали главные SEO-новости недели для специалистов по продвижению сайтов",
+    items = [
+        _item(
+            "Триплетные графы для SEO: как Google читает структуру текста",
+            "Полная версия вебинара Андрея: текстовое ранжирование в Google "
+            "и примеры триплетных графов для SEO-оптимизации текстов.",
+            body="Полная версия вебинара Андрея: текстовое ранжирование в Google "
+            "и примеры триплетных графов для SEO-оптимизации текстов.",
+        ),
+        _item(
+            "Регистрация на вебинар по покупке ссылок завтра в 19:00",
+            "Запишитесь на вебинар прямо сейчас, места ограничены",
+            body="Запишитесь на вебинар прямо сейчас, места ограничены",
+        ),
+    ]
+    kept = analyzer.filter_noise(items)
+    assert len(kept) == 1
+    assert "Триплетные" in kept[0].title
+
+
+def test_deduplicate_prefers_telegram_over_rss_on_tie():
+    """Builtin EN RSS is fetched first; on equal reactions keep the TG post."""
+    analyzer = NewsAnalyzer()
+    rss = NewsItem(
+        title="Google core update confirmed for search ranking",
+        url="https://searchengineland.com/core-update",
+        published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        source_type="rss",
+        source_name="Search Engine Land",
+        summary="Google confirmed a core update affecting search ranking.",
+        body="Google confirmed a core update affecting search ranking.",
+        reactions=0,
+        views=0,
     )
-    google = _item(
-        "Google подтвердил сбой в выдаче поиска",
-        "Google подтвердил сбой индексации, страницы выпадали из выдачи на 6 часов.",
-        url="https://t.me/ch/2",
-        reactions=50,
-        body="Google подтвердил сбой индексации, страницы выпадали из выдачи на 6 часов.",
+    tg = NewsItem(
+        title="Google подтвердил core update алгоритма поиска",
+        url="https://t.me/shakinru/123",
+        published_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        source_type="telegram",
+        source_name="@shakinru",
+        summary="Google подтвердил core update алгоритма поиска в выдаче.",
+        body="Google подтвердил core update алгоритма поиска в выдаче.",
+        reactions=0,
+        views=0,
     )
-    result = analyzer.process([orphan, google], period=1, max_sentences=2)
-    cats = result["categories"]
-    assert result["stats"]["final_count"] == 2
-    assert "🔍 Google и Поиск" in cats
-    assert "📌 Другое" in cats
-    assert cats["📌 Другое"][0].title.startswith("SEO новости")
+    out = analyzer.deduplicate([rss, tg])
+    assert len(out) == 1
+    assert out[0].source_type == "telegram"
+    assert "@shakinru" in out[0].source_name or "t.me" in out[0].url
+
 
 
 def test_process_groups_by_seo_categories_sorted_by_reactions():

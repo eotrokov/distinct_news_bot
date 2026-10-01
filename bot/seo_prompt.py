@@ -144,6 +144,7 @@ SEO_RELEVANCE_KEYWORDS: list[str] = sorted(
     | {
         "seo",
         "сео",
+        "сеошник",
         "поисков",
         "вебмастер",
         "сайт",
@@ -164,6 +165,21 @@ SEO_RELEVANCE_KEYWORDS: list[str] = sorted(
         "schema.org",
         "structured data",
         "микроразметк",
+        # Common RU SEO jargon that may miss thematic blocks.
+        "гео ",
+        "geo ",
+        "aeo",
+        "позиции",
+        "позиций",
+        "минусинск",
+        "баден-баден",
+        "семантическ",
+        "семантичес",
+        "кластеризац",
+        "перелинков",
+        "тошнота",
+        "асессор",
+        "вебмастерская",
     }
 )
 
